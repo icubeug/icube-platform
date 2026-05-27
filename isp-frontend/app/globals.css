@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    @apply bg-surface text-slate-800 font-sans antialiased;
+  }
+  input, select, textarea {
+    @apply outline-none;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-brand-green hover:bg-brand-green-dk text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium px-4 py-2 rounded-lg transition-colors duration-150;
+  }
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-150;
+  }
+  .card {
+    @apply bg-white rounded-xl border border-slate-100 shadow-sm;
+  }
+  .input {
+    @apply w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-brand-green focus:border-brand-green transition;
+  }
+  .badge-green  { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700; }
+  .badge-red    { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700; }
+  .badge-amber  { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700; }
+  .badge-slate  { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600; }
+  .badge-blue   { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700; }
+}
+
+/* ── Dark admin theme — applied to all children of [data-theme="dark"] ─────── */
+[data-theme="dark"] {
+  background: #0f0f0f;
+  color: #e2e8f0;
+}
+[data-theme="dark"] .card {
+  background: #1a1a1a;
+  border-color: #222;
+  box-shadow: none;
+}
+[data-theme="dark"] .input {
+  background: #111;
+  border-color: #2a2a2a;
+  color: #e2e8f0;
+}
+[data-theme="dark"] .input::placeholder { color: #555; }
+[data-theme="dark"] .input:focus {
+  border-color: #1D9E75;
+  box-shadow: 0 0 0 2px rgba(29,158,117,0.15);
+}
+[data-theme="dark"] .btn-secondary {
+  background: #1a1a1a;
+  border-color: #2a2a2a;
+  color: #aaa;
+}
+[data-theme="dark"] .btn-secondary:hover { background: #222; color: #fff; }
+[data-theme="dark"] h1,
+[data-theme="dark"] h2,
+[data-theme="dark"] h3 { color: #fff; }
+[data-theme="dark"] table thead tr {
+  background: #111 !important;
+  border-color: #222 !important;
+}
+[data-theme="dark"] table th { color: #555 !important; }
+[data-theme="dark"] table td { color: #aaa !important; }
+[data-theme="dark"] table td.font-medium,
+[data-theme="dark"] table td.font-semibold,
+[data-theme="dark"] table td.font-bold { color: #ddd !important; }
+[data-theme="dark"] table tr:hover { background: #1e1e1e !important; }
+[data-theme="dark"] table .divide-y > * { border-color: #1e1e1e; }
+[data-theme="dark"] .text-slate-800 { color: #e2e8f0 !important; }
+[data-theme="dark"] .text-slate-700 { color: #cbd5e1 !important; }
+[data-theme="dark"] .text-slate-600 { color: #94a3b8 !important; }
+[data-theme="dark"] .text-slate-500 { color: #64748b !important; }
+[data-theme="dark"] .text-slate-400 { color: #475569 !important; }
+[data-theme="dark"] .bg-slate-50    { background: #111 !important; }
+[data-theme="dark"] .bg-slate-100   { background: #1e1e1e !important; }
+[data-theme="dark"] .border-slate-100 { border-color: #222 !important; }
+[data-theme="dark"] .border-slate-200 { border-color: #2a2a2a !important; }
+[data-theme="dark"] .divide-slate-50 > * + * { border-color: #1e1e1e !important; }
+[data-theme="dark"] select option { background: #1a1a1a; color: #e2e8f0; }
+[data-theme="dark"] .badge-green  { background: rgba(29,158,117,0.15); color: #34d399; }
+[data-theme="dark"] .badge-red    { background: rgba(239,68,68,0.15);  color: #f87171; }
+[data-theme="dark"] .badge-amber  { background: rgba(245,158,11,0.15); color: #fbbf24; }
+[data-theme="dark"] .badge-slate  { background: #1e1e1e; color: #666; }
+[data-theme="dark"] .badge-blue   { background: rgba(55,138,221,0.15); color: #60a5fa; }
+[data-theme="dark"] .spinner-dark { border-color: rgba(255,255,255,0.1); border-top-color: #1D9E75; }
+
+/* Spinner */
+.spinner {
+  width: 20px; height: 20px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+.spinner-dark {
+  border-color: rgba(0,0,0,.1);
+  border-top-color: #1D9E75;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -1,0 +1,7 @@
+{
+  "/admin/settings/routers/page": "app/admin/settings/routers/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/admin/settings/advanced/page": "app/admin/settings/advanced/page.js",
+  "/admin/remote/page": "app/admin/remote/page.js",
+  "/admin/analytics/page": "app/admin/analytics/page.js"
+}

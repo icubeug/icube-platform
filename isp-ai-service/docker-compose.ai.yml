@@ -1,0 +1,69 @@
+# docker-compose.ai.yml
+# Add this service to your main docker-compose.yml, or run standalone.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.ai.yml up
+
+version: '3.9'
+
+services:
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"           # Internal only — expose via Nginx, not directly
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - isp-network
+
+  # Reference your existing services below — these are already in your main compose file.
+  # Shown here so Claude Code knows the network and dependency names.
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: isp_db
+      POSTGRES_USER: isp_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U isp_user -d isp_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - isp-network
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    networks:
+      - isp-network
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  isp-network:
+    driver: bridge

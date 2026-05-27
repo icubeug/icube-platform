@@ -1,0 +1,129 @@
+# docker-compose.yml  (FULL UPGRADED STACK)
+# Covers: Core API, AI service, FreeRADIUS, PostgreSQL, Redis, Nginx
+
+version: '3.9'
+
+services:
+
+  # ── Core API (Express — all modules) ────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL:         ${DATABASE_URL}
+      REDIS_URL:            redis://redis:6379
+      JWT_SECRET:           ${JWT_SECRET}
+      AGENT_JWT_SECRET:     ${AGENT_JWT_SECRET}
+      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
+      STRIPE_SECRET_KEY:    ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET:${STRIPE_WEBHOOK_SECRET}
+      MTN_API_KEY:          ${MTN_API_KEY}
+      MTN_API_SECRET:       ${MTN_API_SECRET}
+      MTN_COLLECTION_URL:   ${MTN_COLLECTION_URL}
+      AIRTEL_CLIENT_ID:     ${AIRTEL_CLIENT_ID}
+      AIRTEL_CLIENT_SECRET: ${AIRTEL_CLIENT_SECRET}
+      SMS_PROVIDER:         ${SMS_PROVIDER}         # africas_talking | nexmo
+      SMS_API_KEY:          ${SMS_API_KEY}
+      SMS_SENDER_ID:        ${SMS_SENDER_ID}
+      PORT:                 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      freeradius:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - isp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       isp_db
+      POSTGRES_USER:     isp_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/schema:/docker-entrypoint-initdb.d   # auto-runs migrations on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U isp_user -d isp_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - isp-network
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru --save 60 100
+    volumes:
+      - redisdata:/data
+    networks:
+      - isp-network
+
+  # ── FreeRADIUS ───────────────────────────────────────────────────────────────
+  freeradius:
+    image: freeradius/freeradius-server:latest
+    restart: unless-stopped
+    volumes:
+      - ./config/freeradius:/etc/freeradius/3.0
+    environment:
+      DB_HOST:     postgres
+      DB_NAME:     isp_db
+      DB_USER:     isp_user
+      DB_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "1812:1812/udp"   # Auth
+      - "1813:1813/udp"   # Accounting
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - isp-network
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx:/etc/nginx/conf.d
+      - ./config/ssl:/etc/nginx/ssl
+      - certbot-www:/var/www/certbot
+    depends_on:
+      - api
+    networks:
+      - isp-network
+
+  # ── Certbot (SSL auto-renewal) ────────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./config/ssl:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
+
+volumes:
+  pgdata:
+  redisdata:
+  certbot-www:
+
+networks:
+  isp-network:
+    driver: bridge
