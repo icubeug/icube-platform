@@ -128,6 +128,57 @@ function RouterCard({ router, onViewAnalytics }: { router: Router; onViewAnalyti
   );
 }
 
+// ── Model detection ───────────────────────────────────────────────────────────
+const TIER_DEFS = [
+  {
+    tier: 1, name: 'SOHO',       color: '#6b7280', vpn: 'l2tp'      as const,
+    subnet: '192.168.1.0/24', max_users: 200,
+    models: ['rb941','rb931','rb951','rb952','rb750','hap lite','hap mini',
+             'hap ac lite','hex lite','hex s','hex','rblhgr'],
+  },
+  {
+    tier: 2, name: 'Medium',     color: '#2563eb', vpn: 'l2tp'      as const,
+    subnet: '10.10.0.0/23',   max_users: 400,
+    models: ['hap ac','rb962','rbd53','rb2011','map','cap','wap','rb951g','rb1100ah'],
+  },
+  {
+    tier: 3, name: 'Large',      color: '#f59e0b', vpn: 'wireguard' as const,
+    subnet: '10.10.0.0/21',   max_users: 1600,
+    models: ['rb3011','rb4011','l009','rb1100','ccr1009','rb5009','hap ax'],
+  },
+  {
+    tier: 4, name: 'Enterprise', color: '#f97316', vpn: 'wireguard' as const,
+    subnet: '10.10.0.0/19',   max_users: 6000,
+    models: ['ccr1016','ccr1036','ccr1072','ccr2004','ccr2116'],
+  },
+  {
+    tier: 5, name: 'Carrier',    color: '#ef4444', vpn: 'wireguard' as const,
+    subnet: '10.10.0.0/18',   max_users: 12000,
+    models: ['ccr2216'],
+  },
+] as const;
+
+type TierDef = typeof TIER_DEFS[number];
+type DetectResult = { tier: TierDef; vpn: 'wireguard' | 'l2tp'; match: string } | null;
+
+function detectModelInfo(model: string): DetectResult {
+  if (!model.trim()) return null;
+  const m = model.toLowerCase().trim();
+
+  // Fast prefix checks for v7 models
+  if (/ccr2\d/.test(m) || m.startsWith('l009') || m.startsWith('rb4011') || m.startsWith('rb5009')) {
+    const tier = TIER_DEFS.find(t => t.tier === (m.startsWith('ccr2216') ? 5 : m.startsWith('rb4011') || m.startsWith('l009') ? 3 : 4))!;
+    return { tier, vpn: 'wireguard', match: model.trim() };
+  }
+
+  for (const tier of TIER_DEFS) {
+    if (tier.models.some(name => m.includes(name))) {
+      return { tier, vpn: tier.vpn, match: model.trim() };
+    }
+  }
+  return null; // unknown
+}
+
 // ── Step indicator ────────────────────────────────────────────────────────────
 function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
   return (
@@ -145,21 +196,29 @@ function StepDot({ n, active, done }: { n: number; active: boolean; done: boolea
 
 // ── Zero-Touch Modal (3-step enterprise flow) ─────────────────────────────────
 function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: () => void; onDone: () => void }) {
-  const [step,       setStep]       = useState<1 | 2 | 3>(1);
-  const [form,       setForm]       = useState({ name: '', model: '', site_id: '', vpn_type: 'wireguard' as 'wireguard' | 'l2tp' });
-  const [saving,     setSaving]     = useState(false);
-  const [err,        setErr]        = useState('');
-  const [ztResult,   setZtResult]   = useState<ZeroTouchResult | null>(null);
-  const [cmdCopied,  setCmdCopied]  = useState(false);
-  const [polling,    setPolling]    = useState(false);
-  const [connected,  setConnected]  = useState<Router | null>(null);
+  const [step,        setStep]       = useState<1 | 2 | 3>(1);
+  const [form,        setForm]       = useState({ name: '', model: '', site_id: '', vpn_type: 'wireguard' as 'wireguard' | 'l2tp' });
+  const [saving,      setSaving]     = useState(false);
+  const [err,         setErr]        = useState('');
+  const [ztResult,    setZtResult]   = useState<ZeroTouchResult | null>(null);
+  const [cmdCopied,   setCmdCopied]  = useState(false);
+  const [polling,     setPolling]    = useState(false);
+  const [connected,   setConnected]  = useState<Router | null>(null);
+  const [vpnOverride, setVpnOverride] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const modelLower     = form.model.toLowerCase();
-  const isLegacyModel  = !form.model || (
-    ['rb941','rb931','rb951','rb952','rb750','hap lite','hap mini','hap ac lite','hex lite','hex s',
-     'hap ac','rb962','rbd53','rb2011','map','cap','rb951g'].some(m => modelLower.includes(m))
-  );
+  const detection    = detectModelInfo(form.model);
+  const autoDetected = !!detection && !vpnOverride;
+
+  // Auto-select VPN and reset override when model changes
+  useEffect(() => {
+    if (!form.model.trim()) { setVpnOverride(false); return; }
+    const d = detectModelInfo(form.model);
+    if (d) {
+      setForm(f => ({ ...f, vpn_type: d.vpn }));
+      setVpnOverride(false);
+    }
+  }, [form.model]);
 
   // Start polling when step 2 begins
   useEffect(() => {
@@ -264,34 +323,111 @@ function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: ()
                 value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </div>
 
+            {/* Model field */}
             <div>
               <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>MikroTik Model</label>
-              <input style={inp} placeholder="e.g. RB4011, L009, hAP ac²"
-                value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
-              <p style={{ fontSize: 11, color: '#444', margin: '4px 0 0' }}>Auto-detects tier → assigns subnet size and capacity</p>
+              <div style={{ position: 'relative' }}>
+                <input style={inp} placeholder="e.g. RB4011, L009, hAP ac²"
+                  value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
+                {detection && (
+                  <span style={{
+                    position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                    background: `${detection.tier.color}18`,
+                    border: `1px solid ${detection.tier.color}40`,
+                    color: detection.tier.color,
+                  }}>
+                    T{detection.tier.tier} {detection.tier.name}
+                  </span>
+                )}
+              </div>
+
+              {/* Detection result */}
+              {form.model.trim() && (
+                <div style={{ marginTop: 7 }}>
+                  {detection ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <p style={{ fontSize: 12, color: '#22c55e', margin: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <Check size={12} />
+                        <span>
+                          <strong>{form.model.trim()}</strong> detected —{' '}
+                          <span style={{ color: detection.tier.color }}>Tier {detection.tier.tier} {detection.tier.name}</span>
+                          {' — '}
+                          <span style={{ color: detection.vpn === 'wireguard' ? '#60a5fa' : '#fcd34d' }}>
+                            {detection.vpn === 'wireguard' ? 'WireGuard (RouterOS v7+)' : 'L2TP/IPsec (RouterOS v6)'}
+                          </span>
+                        </span>
+                      </p>
+                      <p style={{ fontSize: 11, color: '#555', margin: 0 }}>
+                        Subnet: <span style={{ color: '#888', fontFamily: 'monospace' }}>{detection.tier.subnet}</span>
+                        {' · '}Max <span style={{ color: '#888' }}>{detection.tier.max_users.toLocaleString()} users</span>
+                      </p>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 12, color: '#888', margin: 0 }}>
+                      Model not recognized — defaulting to WireGuard
+                    </p>
+                  )}
+                </div>
+              )}
+              {!form.model.trim() && (
+                <p style={{ fontSize: 11, color: '#444', margin: '4px 0 0' }}>Auto-detects tier, subnet size, VPN protocol and capacity</p>
+              )}
             </div>
 
+            {/* VPN Protocol */}
             <div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 7, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>VPN Protocol</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {([
-                  { key: 'wireguard', label: 'WireGuard',  sub: 'RouterOS v7+', disabled: false         },
-                  { key: 'l2tp',      label: 'L2TP/IPsec', sub: 'RouterOS v6',  disabled: !isLegacyModel },
-                ] as { key: 'wireguard' | 'l2tp'; label: string; sub: string; disabled: boolean }[]).map(({ key, label, sub, disabled }) => (
-                  <button key={key} type="button"
-                    disabled={disabled}
-                    onClick={() => !disabled && setForm(f => ({ ...f, vpn_type: key }))}
-                    style={{
-                      flex: 1, padding: '10px 0', borderRadius: 8, fontSize: 12,
-                      cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 600,
-                      background: form.vpn_type === key ? 'rgba(37,99,235,0.15)' : '#0f0f0f',
-                      border: `1px solid ${form.vpn_type === key ? '#2563eb' : '#2a2a2a'}`,
-                      color: form.vpn_type === key ? '#60a5fa' : disabled ? '#333' : '#666',
-                      opacity: disabled ? 0.5 : 1,
-                    }}>
-                    {label}<br /><span style={{ fontSize: 10, fontWeight: 400 }}>{sub}</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label style={{ fontSize: 11, color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>VPN Protocol</label>
+                  {autoDetected && (
+                    <span style={{ fontSize: 10, color: '#555', display: 'flex', alignItems: 'center', gap: 3 }}>
+                      🔒 auto-detected
+                    </span>
+                  )}
+                </div>
+                {autoDetected && (
+                  <button type="button" onClick={() => setVpnOverride(true)} style={{
+                    background: 'none', border: 'none', color: '#2563eb', fontSize: 11,
+                    cursor: 'pointer', padding: 0, fontWeight: 500,
+                  }}>
+                    Override →
                   </button>
-                ))}
+                )}
+                {vpnOverride && (
+                  <button type="button" onClick={() => { setVpnOverride(false); if (detection) setForm(f => ({ ...f, vpn_type: detection.vpn })); }} style={{
+                    background: 'none', border: 'none', color: '#555', fontSize: 11,
+                    cursor: 'pointer', padding: 0,
+                  }}>
+                    ← Restore auto
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, opacity: autoDetected ? 0.85 : 1 }}>
+                {([
+                  { key: 'wireguard', label: 'WireGuard',  sub: 'RouterOS v7+' },
+                  { key: 'l2tp',      label: 'L2TP/IPsec', sub: 'RouterOS v6'  },
+                ] as { key: 'wireguard' | 'l2tp'; label: string; sub: string }[]).map(({ key, label, sub }) => {
+                  const isActive   = form.vpn_type === key;
+                  const isDisabled = autoDetected && !isActive;
+                  return (
+                    <button key={key} type="button"
+                      disabled={isDisabled}
+                      onClick={() => !isDisabled && setForm(f => ({ ...f, vpn_type: key }))}
+                      style={{
+                        flex: 1, padding: '10px 0', borderRadius: 8, fontSize: 12,
+                        cursor: isDisabled ? 'not-allowed' : 'pointer', fontWeight: 600,
+                        background: isActive ? 'rgba(37,99,235,0.15)' : '#0f0f0f',
+                        border: `1px solid ${isActive ? '#2563eb' : '#2a2a2a'}`,
+                        color: isActive ? '#60a5fa' : '#555',
+                        opacity: isDisabled ? 0.4 : 1,
+                        position: 'relative',
+                      }}>
+                      {label}<br /><span style={{ fontSize: 10, fontWeight: 400 }}>{sub}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
