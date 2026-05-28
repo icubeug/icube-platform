@@ -1,20 +1,25 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { api, Site } from '@/lib/api';
-import { Building2, Plus, MapPin, AlertCircle, RefreshCw, CircleDot, Router } from 'lucide-react';
+import { api, Site, SiteLimit } from '@/lib/api';
+import { Building2, Plus, MapPin, AlertCircle, RefreshCw, CircleDot, Router, Mail } from 'lucide-react';
 
 export default function SitesPage() {
-  const [sites,    setSites]    = useState<Site[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [form,     setForm]     = useState({ name: '', location: '' });
-  const [saving,   setSaving]   = useState(false);
-  const [formErr,  setFormErr]  = useState('');
+  const [sites,     setSites]     = useState<Site[]>([]);
+  const [siteLimit, setSiteLimit] = useState<SiteLimit>({ max_sites: 5, count: 0 });
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState('');
+  const [showForm,  setShowForm]  = useState(false);
+  const [form,      setForm]      = useState({ name: '', location: '' });
+  const [saving,    setSaving]    = useState(false);
+  const [formErr,   setFormErr]   = useState('');
+  const [limitErr,  setLimitErr]  = useState(false);
 
   async function load() {
     setLoading(true); setError('');
-    try { setSites(await api.sites.list()); }
+    try {
+      const [s, lim] = await Promise.all([api.sites.list(), api.sites.limit()]);
+      setSites(s); setSiteLimit(lim);
+    }
     catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -24,14 +29,27 @@ export default function SitesPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name.trim()) { setFormErr('Site name is required'); return; }
-    setSaving(true); setFormErr('');
+    setSaving(true); setFormErr(''); setLimitErr(false);
     try {
       await api.sites.create({ name: form.name.trim(), location: form.location.trim() });
       setForm({ name: '', location: '' });
       setShowForm(false);
       load();
-    } catch (e: any) { setFormErr(e.message); }
+    } catch (e: any) {
+      if (e.message?.includes('site limit') || e.message?.includes('limit')) {
+        setLimitErr(true);
+        setShowForm(false);
+      } else {
+        setFormErr(e.message);
+      }
+    }
     finally { setSaving(false); }
+  }
+
+  function requestMoreSites() {
+    const subject = encodeURIComponent('Request: Increase site limit');
+    const body    = encodeURIComponent(`Hi iCube support,\n\nI have reached my ${siteLimit.max_sites} site limit and would like to request an increase.\n\nTenant ID: ${typeof window !== 'undefined' ? localStorage.getItem('icube_tenant_id') : ''}\n\nThank you.`);
+    window.location.href = `mailto:support@icubeug.net?subject=${subject}&body=${body}`;
   }
 
   async function toggleStatus(site: Site) {
@@ -64,7 +82,10 @@ export default function SitesPage() {
           }}>
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
-          <button onClick={() => setShowForm(v => !v)} style={{
+              <button onClick={() => {
+            if (siteLimit.count >= siteLimit.max_sites) { setLimitErr(true); }
+            else { setShowForm(v => !v); }
+          }} style={{
             display: 'flex', alignItems: 'center', gap: 6,
             background: '#2563eb', border: 'none', color: '#fff',
             borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
@@ -73,6 +94,55 @@ export default function SitesPage() {
           </button>
         </div>
       </div>
+
+      {/* Site usage bar */}
+      {!loading && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: '#888' }}>
+              {siteLimit.count} of {siteLimit.max_sites} sites used
+            </span>
+            {siteLimit.count >= siteLimit.max_sites && (
+              <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>Limit reached</span>
+            )}
+          </div>
+          <div style={{ height: 4, background: '#1e1e1e', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', borderRadius: 99,
+              width: `${Math.min(100, (siteLimit.count / siteLimit.max_sites) * 100)}%`,
+              background: siteLimit.count >= siteLimit.max_sites ? '#ef4444'
+                        : siteLimit.count >= siteLimit.max_sites * 0.8 ? '#f59e0b'
+                        : '#2563eb',
+              transition: 'width 0.4s',
+            }} />
+          </div>
+        </div>
+      )}
+
+      {/* Limit reached banner */}
+      {limitErr && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 12, marginBottom: 16, flexWrap: 'wrap',
+          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+          borderRadius: 10, padding: '12px 16px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <AlertCircle size={14} color="#f59e0b" />
+            <span style={{ fontSize: 13, color: '#fcd34d' }}>
+              You have reached your {siteLimit.max_sites} site limit. Contact support to add more sites.
+            </span>
+          </div>
+          <button onClick={requestMoreSites} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.35)',
+            color: '#fcd34d', borderRadius: 7, padding: '6px 14px', fontSize: 12,
+            fontWeight: 600, cursor: 'pointer', flexShrink: 0,
+          }}>
+            <Mail size={12} /> Request More Sites
+          </button>
+        </div>
+      )}
 
       {/* Error */}
       {error && (

@@ -495,6 +495,8 @@ function buildCliSteps(p: {
   wgPeerIp:      string;
   tenantSlug:    string;
   isL009:        boolean;
+  vpnPort:       string;
+  vpnAddress:    string;
 }): { title: string; script: string; verify?: string }[] {
   const SERVER_IP     = '139.84.247.205';
   const PORTAL_DOMAIN = 'icubeug.net';
@@ -584,8 +586,9 @@ function buildCliSteps(p: {
       script: `# Create WireGuard interface
 /interface wireguard add name=icube-vpn private-key="${p.wgPrivateKey}" listen-port=13231 comment="iCube VPN"
 
+# VPN address: ${p.vpnAddress}
 # Add iCube server as peer
-/interface wireguard peers add interface=icube-vpn public-key="${p.wgServerPubKey}" endpoint-address=${SERVER_IP} endpoint-port=51820 allowed-address=10.99.0.0/24,${SERVER_IP}/32 persistent-keepalive=25 comment="iCube Server"
+/interface wireguard peers add interface=icube-vpn public-key="${p.wgServerPubKey}" endpoint-address=vpn.icubeug.net endpoint-port=${p.vpnPort} allowed-address=10.99.0.0/24,${SERVER_IP}/32 persistent-keepalive=25 comment="iCube Server"
 
 # Assign VPN IP address
 /ip address add address=${p.wgPeerIp}/24 interface=icube-vpn comment="iCube VPN IP"
@@ -815,6 +818,8 @@ function RouterSetupWizardInner() {
       wgPeerIp:       router?.wg_peer_ip    || router?.vpn_peer_ip    || '[PEER-IP-FROM-SERVER]',
       tenantSlug,
       isL009:         (selModel as any)?.is_l009 || false,
+      vpnPort:        String(router?.vpn_port  || 51820),
+      vpnAddress:     router?.vpn_address || 'vpn.icubeug.net:51820',
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, netConfig, selModel, step]);

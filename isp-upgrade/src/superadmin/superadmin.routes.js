@@ -190,15 +190,16 @@ router.get('/tenants/:id', requireSuperadmin, async (req, res) => {
   }
 });
 
-// PATCH /api/superadmin/tenants/:id — update status, plan, notes
+// PATCH /api/superadmin/tenants/:id — update status, plan, notes, max_sites
 router.patch('/tenants/:id', requireSuperadmin, async (req, res) => {
   const db = req.app.locals.db;
-  const { status, plan, notes } = req.body;
+  const { status, plan, notes, max_sites } = req.body;
   const sets = [];
   const params = [];
-  if (status) { sets.push(`status = $${params.length+1}`); params.push(status); }
-  if (plan)   { sets.push(`plan = $${params.length+1}`);   params.push(plan); }
+  if (status)    { sets.push(`status = $${params.length+1}`);    params.push(status); }
+  if (plan)      { sets.push(`plan = $${params.length+1}`);      params.push(plan); }
   if (notes !== undefined) { sets.push(`notes = $${params.length+1}`); params.push(notes); }
+  if (max_sites !== undefined) { sets.push(`max_sites = $${params.length+1}`); params.push(parseInt(max_sites, 10)); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
   params.push(req.params.id);
   try {
@@ -206,6 +207,49 @@ router.patch('/tenants/:id', requireSuperadmin, async (req, res) => {
       `UPDATE tenants SET ${sets.join(',')} WHERE id=$${params.length} RETURNING *`, params
     );
     res.json(row);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/superadmin/impersonate/:tenant_id — generate short-lived admin JWT
+router.post('/impersonate/:tenant_id', requireSuperadmin, async (req, res) => {
+  const db         = req.app.locals.db;
+  const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret';
+  try {
+    // Find the primary admin for this tenant
+    const admins = await db.query(`
+      SELECT a.id, a.email, a.name, a.role, t.name AS tenant_name, t.slug
+      FROM admins a
+      JOIN tenants t ON t.id = a.tenant_id
+      WHERE a.tenant_id = $1
+      ORDER BY CASE a.role WHEN 'admin' THEN 0 ELSE 1 END, a.created_at ASC
+      LIMIT 1
+    `, [req.params.tenant_id]);
+
+    if (!admins.length) return res.status(404).json({ error: 'No admin found for this tenant' });
+    const admin = admins[0];
+
+    const token = jwt.sign(
+      {
+        admin_id:        admin.id,
+        tenant_id:       req.params.tenant_id,
+        role:            admin.role,
+        impersonating:   true,
+        superadmin_id:   req.superadmin.superadmin_id,
+      },
+      JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.json({
+      token,
+      admin_id:     admin.id,
+      tenant_id:    req.params.tenant_id,
+      tenant_name:  admin.tenant_name,
+      tenant_slug:  admin.slug,
+      impersonating: true,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -315,10 +359,10 @@ router.put('/settings', requireSuperadmin, async (req, res) => {
   try {
     for (const [key, value] of Object.entries(updates)) {
       await db.query(`
-        INSERT INTO platform_settings (key, value, updated_by, updated_at)
-        VALUES ($1, $2, $3, NOW())
-        ON CONFLICT (key) DO UPDATE SET value=$2, updated_by=$3, updated_at=NOW()
-      `, [key, String(value), req.superadmin.superadmin_id]);
+        INSERT INTO platform_settings (key, value)
+        VALUES ($1, $2)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      `, [key, String(value)]);
     }
     const rows = await db.query(`SELECT * FROM platform_settings ORDER BY key`);
     const settings = {};

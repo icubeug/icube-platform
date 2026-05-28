@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { api, Payment, Voucher, Site } from '@/lib/api';
+import { api, Payment, Voucher, Site, SiteLimit } from '@/lib/api';
 import type { ChartPoint } from '@/components/admin/RevenueChart';
 import {
   TrendingUp, Download, DollarSign, Users, Cpu, HardDrive,
@@ -37,7 +37,7 @@ function dateRangeLabel() {
 // ── Stat card ─────────────────────────────────────────────────────────────────
 function StatCard({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ background: '#1a1a1a', border: '1px solid #222', borderRadius: 12, padding: '16px 18px' }}>
+    <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 12, padding: '16px 18px' }}>
       {children}
     </div>
   );
@@ -53,7 +53,7 @@ function SaleRow({ payment }: { payment: Payment }) {
     <div className="flex items-center gap-3 py-2.5" style={{ borderBottom: '1px solid #1e1e1e' }}>
       {/* Avatar */}
       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{ background: '#1D9E75' }}>
+        style={{ background: '#2563eb' }}>
         <Ticket size={14} className="text-white" />
       </div>
       {/* Info */}
@@ -68,7 +68,7 @@ function SaleRow({ payment }: { payment: Payment }) {
         </p>
       </div>
       {/* Amount */}
-      <span className="text-xs font-bold flex-shrink-0" style={{ color: '#1D9E75' }}>
+      <span className="text-xs font-bold flex-shrink-0" style={{ color: '#2563eb' }}>
         +{fmtUGX(Number(payment.amount_ugx))}
       </span>
     </div>
@@ -77,21 +77,24 @@ function SaleRow({ payment }: { payment: Payment }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
-  const [payments, setPayments]     = useState<Payment[]>([]);
-  const [vouchers, setVouchers]     = useState<Voucher[]>([]);
-  const [sites, setSites]           = useState<Site[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState('');
+  const [payments,   setPayments]   = useState<Payment[]>([]);
+  const [vouchers,   setVouchers]   = useState<Voucher[]>([]);
+  const [sites,      setSites]      = useState<Site[]>([]);
+  const [siteLimit,  setSiteLimit]  = useState<SiteLimit>({ max_sites: 5, count: 0 });
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, v, s] = await Promise.all([
+      const [p, v, s, lim] = await Promise.all([
         api.payments.list(200),
         api.vouchers.list(),
         api.sites.list(),
+        api.sites.limit().catch(() => ({ max_sites: 5, count: 0 })),
       ]);
       setPayments(p); setVouchers(v); setSites(s);
+      setSiteLimit({ ...lim, count: lim.count || s.length });
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, []);
@@ -151,14 +154,14 @@ export default function AdminDashboard() {
         <h1 className="text-xl font-bold text-white">Dashboard</h1>
         <div className="flex items-center gap-3">
           <button onClick={load}
-            style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, padding: '6px 10px' }}
+            style={{ background: '#131313', border: '1px solid #2a2a2a', borderRadius: 8, padding: '6px 10px' }}
             className="flex items-center gap-1.5 text-[12px] text-[#888] hover:text-white transition-colors">
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
           {/* Date range pill */}
           <button
-            style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, padding: '6px 14px' }}
+            style={{ background: '#131313', border: '1px solid #2a2a2a', borderRadius: 8, padding: '6px 14px' }}
             className="flex items-center gap-2 text-[12px] text-[#aaa] hover:text-white transition-colors">
             {dateRangeLabel()}
             <ChevronDown size={13} style={{ color: '#555' }} />
@@ -180,7 +183,7 @@ export default function AdminDashboard() {
         <StatCard>
           <div className="flex items-start justify-between mb-3">
             <p className="text-[11px] font-medium" style={{ color: '#666' }}>Net Sales</p>
-            <TrendingUp size={14} style={{ color: '#1D9E75' }} />
+            <TrendingUp size={14} style={{ color: '#2563eb' }} />
           </div>
           <p className="text-2xl font-bold text-white mb-1">
             {loading ? '—' : fmtUGX(netSales)}
@@ -222,8 +225,8 @@ export default function AdminDashboard() {
         <StatCard>
           <div className="flex items-start justify-between mb-3">
             <p className="text-[11px] font-medium" style={{ color: '#666' }}>System Insights</p>
-            <span className="flex items-center gap-1 text-[10px] font-semibold" style={{ color: '#1D9E75' }}>
-              <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: '#1D9E75' }} />
+            <span className="flex items-center gap-1 text-[10px] font-semibold" style={{ color: '#2563eb' }}>
+              <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: '#2563eb' }} />
               Online
             </span>
           </div>
@@ -256,17 +259,42 @@ export default function AdminDashboard() {
         </StatCard>
       </div>
 
+      {/* ── Site usage bar ── */}
+      {!loading && (
+        <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 10, padding: '12px 18px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 16 }}>
+          <span style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap' }}>Sites</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ height: 5, background: '#1e1e1e', borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 99,
+                width: `${Math.min(100, (siteLimit.count / siteLimit.max_sites) * 100)}%`,
+                background: siteLimit.count >= siteLimit.max_sites ? '#ef4444' : '#2563eb',
+                transition: 'width 0.4s',
+              }} />
+            </div>
+          </div>
+          <span style={{ fontSize: 12, color: siteLimit.count >= siteLimit.max_sites ? '#f87171' : '#888', whiteSpace: 'nowrap' }}>
+            <strong style={{ color: '#fff' }}>{siteLimit.count}</strong> of {siteLimit.max_sites} sites used
+          </span>
+          {siteLimit.count >= siteLimit.max_sites && (
+            <a href="/admin/sites" style={{ fontSize: 11, color: '#2563eb', textDecoration: 'none', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              Request more →
+            </a>
+          )}
+        </div>
+      )}
+
       {/* ── Main two-column area ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '60% 1fr', gap: 20 }}>
 
         {/* ── LEFT: Overview + Chart ── */}
-        <div style={{ background: '#1a1a1a', border: '1px solid #222', borderRadius: 12, padding: '20px 22px' }}>
+        <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 12, padding: '20px 22px' }}>
           {/* Section header */}
           <div className="flex items-center justify-between mb-1">
             <h2 className="text-sm font-bold text-white">Overview</h2>
             {/* Totals / All dropdown */}
             <div className="flex items-center gap-2">
-              <button style={{ background: '#1D9E75', borderRadius: 6, padding: '3px 10px', fontSize: 11, color: '#fff', fontWeight: 600 }}>
+              <button style={{ background: '#2563eb', borderRadius: 6, padding: '3px 10px', fontSize: 11, color: '#fff', fontWeight: 600 }}>
                 Totals
               </button>
               <button style={{ background: '#222', borderRadius: 6, padding: '3px 10px', fontSize: 11, color: '#666', border: '1px solid #2a2a2a' }}
@@ -280,7 +308,7 @@ export default function AdminDashboard() {
           {/* Chart */}
           {loading
             ? <div className="h-60 flex items-center justify-center">
-                <div className="w-5 h-5 rounded-full border-2 border-[#1D9E75] border-t-transparent animate-spin" />
+                <div className="w-5 h-5 rounded-full border-2 border-[#2563eb] border-t-transparent animate-spin" />
               </div>
             : chartData.length === 0
               ? <div className="h-60 flex items-center justify-center text-[#555] text-xs">No data for this period</div>
@@ -289,7 +317,7 @@ export default function AdminDashboard() {
         </div>
 
         {/* ── RIGHT: Recent Sales ── */}
-        <div style={{ background: '#1a1a1a', border: '1px solid #222', borderRadius: 12, padding: '20px 18px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 12, padding: '20px 18px', display: 'flex', flexDirection: 'column' }}>
           {/* Header */}
           <div className="flex items-start justify-between mb-1">
             <div>
@@ -298,7 +326,7 @@ export default function AdminDashboard() {
                 You made {todaySales.length} sale{todaySales.length !== 1 ? 's' : ''} today
               </p>
             </div>
-            <button className="text-[10px] hover:text-white transition-colors" style={{ color: '#1D9E75' }}>
+            <button className="text-[10px] hover:text-white transition-colors" style={{ color: '#2563eb' }}>
               Scroll for more
             </button>
           </div>
@@ -307,7 +335,7 @@ export default function AdminDashboard() {
           <div className="flex-1 overflow-y-auto mt-2" style={{ maxHeight: 320, scrollbarWidth: 'none' }}>
             {loading
               ? <div className="flex items-center justify-center h-20">
-                  <div className="w-4 h-4 rounded-full border-2 border-[#1D9E75] border-t-transparent animate-spin" />
+                  <div className="w-4 h-4 rounded-full border-2 border-[#2563eb] border-t-transparent animate-spin" />
                 </div>
               : completed.length === 0
                 ? <p className="text-[#555] text-xs text-center py-8">No sales yet</p>

@@ -27,6 +27,13 @@ export interface Router {
   board_name: string | null; model: string | null; firmware_version: string | null;
   cpu_load: number; uptime_seconds: number; ssh_port: number;
   site_id: string | null; site_name: string | null; created_at: string;
+  vpn_port: number | null; vpn_address: string | null;
+  vpn_connected: boolean; last_heartbeat_at: string | null;
+}
+
+export interface SiteLimit {
+  max_sites: number;
+  count: number;
 }
 export interface Voucher {
   id: string; code: string; status: 'unused' | 'active' | 'expired' | 'used';
@@ -224,7 +231,8 @@ export const api = {
   },
 
   sites: {
-    list: () => req<Site[]>('/sites'),
+    list:   () => req<Site[]>('/sites'),
+    limit:  () => req<SiteLimit>('/sites/limit'),
     create: (data: { name: string; location?: string }) =>
       req<Site>('/sites', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: Partial<Site>) =>

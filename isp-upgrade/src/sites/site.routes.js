@@ -21,12 +21,43 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/v1/sites/limit — returns current count + max for this tenant
+router.get('/limit', async (req, res) => {
+  const db = req.app.locals.db;
+  try {
+    const [tenant]   = await db.query(`SELECT max_sites FROM tenants WHERE id = $1`, [req.tenant_id]);
+    const [countRow] = await db.query(`SELECT COUNT(*) FROM sites WHERE tenant_id = $1`, [req.tenant_id]);
+    res.json({
+      max_sites: tenant?.max_sites ?? 5,
+      count:     parseInt(countRow.count, 10),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/v1/sites
 router.post('/', async (req, res) => {
   const { name, location } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
+  const db = req.app.locals.db;
   try {
-    const rows = await req.app.locals.db.query(`
+    // Enforce site limit
+    const [tenant]   = await db.query(`SELECT max_sites FROM tenants WHERE id = $1`, [req.tenant_id]);
+    const maxSites   = tenant?.max_sites ?? 5;
+    const [countRow] = await db.query(`SELECT COUNT(*) FROM sites WHERE tenant_id = $1`, [req.tenant_id]);
+    const current    = parseInt(countRow.count, 10);
+
+    if (current >= maxSites) {
+      return res.status(403).json({
+        error:         `You have reached your ${maxSites} site limit. Contact support to add more sites.`,
+        limit_reached: true,
+        current,
+        max:           maxSites,
+      });
+    }
+
+    const rows = await db.query(`
       INSERT INTO sites (name, location, tenant_id) VALUES ($1, $2, $3) RETURNING *
     `, [name, location, req.tenant_id]);
     res.status(201).json(rows[0]);
@@ -66,5 +97,3 @@ router.patch('/:id', async (req, res) => {
 });
 
 module.exports = router;
-
-// ── Packages CRUD (used by /admin/packages page) ──────────────────────────────

@@ -2,6 +2,7 @@
 const express = require('express');
 const router  = express.Router();
 const { handleHeartbeat, generateMikrotikScript } = require('../vpn/vpn.service');
+const { provisionRouterPeer, getVpnStatus }       = require('../vpn/wireguard.service');
 
 // POST /api/v1/routers/heartbeat — called by MikroTik scheduler (no tenant auth)
 router.post('/heartbeat', async (req, res) => {
@@ -49,12 +50,37 @@ router.post('/', async (req, res) => {
   const { name, ip_address, api_port, api_username, api_password, site_id, brand } = req.body;
   if (!name || !ip_address) return res.status(400).json({ error: 'name and ip_address required' });
   try {
-    const rows = await req.app.locals.db.query(`
-      INSERT INTO routers (name, ip_address, api_port, api_username, api_password, site_id, brand, tenant_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    const db = req.app.locals.db;
+
+    // Auto-generate RADIUS secret
+    const radiusSecret = 'rs-' + require('crypto').randomBytes(12).toString('hex');
+
+    // Assign next unique VPN port (range 51820–51920, server-wide)
+    const [portRow] = await db.query(`
+      SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers
+    `);
+    const vpnPort    = Math.min(parseInt(portRow.next_port, 10), 51920);
+    const vpnAddress = `vpn.icubeug.net:${vpnPort}`;
+
+    const rows = await db.query(`
+      INSERT INTO routers
+        (name, ip_address, api_port, api_username, api_password, site_id, brand,
+         tenant_id, radius_secret, vpn_port, vpn_address)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       RETURNING *
-    `, [name, ip_address, api_port || 8728, api_username, api_password, site_id, brand || 'mikrotik', req.tenant_id]);
-    res.status(201).json(rows[0]);
+    `, [name, ip_address, api_port || 8728, api_username, api_password, site_id,
+        brand || 'mikrotik', req.tenant_id, radiusSecret, vpnPort, vpnAddress]);
+
+    const router = rows[0];
+
+    // Register this router in the FreeRADIUS nas table
+    await db.query(`
+      INSERT INTO nas (nasname, shortname, type, secret, description)
+      VALUES ($1, $2, 'other', $3, $4)
+      ON CONFLICT (nasname) DO UPDATE SET secret = EXCLUDED.secret, description = EXCLUDED.description
+    `, [ip_address, name.substring(0, 32), radiusSecret, `Router: ${name}`]).catch(() => {});
+
+    res.status(201).json(router);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -257,6 +283,45 @@ router.patch('/:id/setup/complete', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// GET /api/v1/routers/:id/vpn-status — WireGuard peer status
+router.get('/:id/vpn-status', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant?.id;
+  try {
+    const [r] = await db.query(
+      `SELECT * FROM routers WHERE id=$1 AND tenant_id=$2`, [req.params.id, tid]
+    );
+    if (!r) return res.status(404).json({ error: 'Router not found' });
+
+    const wgStatus = r.wireguard_public_key
+      ? await getVpnStatus(r.wireguard_public_key)
+      : { connected: false, note: 'WireGuard not yet provisioned' };
+
+    res.json({
+      router_id:          r.id,
+      name:               r.name,
+      wireguard_peer_ip:  r.wireguard_peer_ip,
+      wireguard_public_key: r.wireguard_public_key,
+      ...wgStatus,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/v1/routers/:id/provision-wireguard — generate WireGuard peer for router
+router.post('/:id/provision-wireguard', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant?.id;
+  try {
+    const [r] = await db.query(
+      `SELECT id FROM routers WHERE id=$1 AND tenant_id=$2`, [req.params.id, tid]
+    );
+    if (!r) return res.status(404).json({ error: 'Router not found' });
+
+    const result = await provisionRouterPeer(db, req.params.id);
+    res.json({ ok: true, ...result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET /api/v1/routers/:id/test-connection

@@ -9,7 +9,7 @@ import {
   Wallet, Users, Package, ArrowLeftRight, ArrowUpFromLine,
   Smartphone, Ticket, Network, Terminal, Settings,
   Receipt, Sliders, HelpCircle, ChevronDown, Wifi,
-  Sun, Moon, LogOut, User as UserIcon, Plus, CheckCircle,
+  Sun, Moon, LogOut, User as UserIcon, Plus, CheckCircle, AlertTriangle,
 } from 'lucide-react';
 
 const BLUE    = '#2563eb';
@@ -147,12 +147,14 @@ function NavRow({ item, isLight }: { item: NavItem; isLight: boolean }) {
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const [sites,         setSites]         = useState<Site[]>([]);
-  const [activeSiteId,  setActiveSiteId]  = useState('');
-  const [siteOpen,      setSiteOpen]      = useState(false);
-  const [theme,         setTheme]         = useState<'dark' | 'light'>('dark');
-  const [user,          setUser]          = useState<{ name: string; email: string; role: string } | null>(null);
-  const [accountOpen,   setAccountOpen]   = useState(false);
+  const [sites,             setSites]             = useState<Site[]>([]);
+  const [activeSiteId,      setActiveSiteId]      = useState('');
+  const [siteOpen,          setSiteOpen]          = useState(false);
+  const [theme,             setTheme]             = useState<'dark' | 'light'>('dark');
+  const [user,              setUser]              = useState<{ name: string; email: string; role: string } | null>(null);
+  const [accountOpen,       setAccountOpen]       = useState(false);
+  const [impersonating,     setImpersonating]     = useState(false);
+  const [impersonateName,   setImpersonateName]   = useState('');
 
   const siteRef    = useRef<HTMLDivElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -170,6 +172,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       const raw = localStorage.getItem('icube_user');
       if (raw) setUser(JSON.parse(raw));
     } catch {}
+
+    if (localStorage.getItem('icube_impersonating') === 'true') {
+      setImpersonating(true);
+      setImpersonateName(localStorage.getItem('icube_impersonating_tenant_name') || 'Unknown Tenant');
+    }
   }, []);
 
   // Load sites
@@ -186,6 +193,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  function exitImpersonation() {
+    const original = localStorage.getItem('icube_original_token');
+    if (original) localStorage.setItem('icube_token', original);
+    localStorage.removeItem('icube_impersonating');
+    localStorage.removeItem('icube_impersonating_tenant_name');
+    localStorage.removeItem('icube_original_token');
+    document.cookie = `icube_token=${original || ''}; path=/; max-age=604800; SameSite=Lax`;
+    window.location.href = '/superadmin/tenants';
+  }
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -410,6 +427,30 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             )}
           </div>
         </header>
+
+        {/* ── Impersonation banner ── */}
+        {impersonating && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '8px 18px', flexShrink: 0,
+            background: 'rgba(245,158,11,0.12)', borderBottom: '1px solid rgba(245,158,11,0.3)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={14} color="#f59e0b" />
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#fcd34d' }}>
+                ⚠ You are viewing as <strong>{impersonateName}</strong>
+              </span>
+            </div>
+            <button onClick={exitImpersonation} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'rgba(245,158,11,0.2)', border: '1px solid rgba(245,158,11,0.4)',
+              color: '#fcd34d', borderRadius: 7, padding: '4px 12px',
+              fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            }}>
+              Exit Impersonation
+            </button>
+          </div>
+        )}
 
         {/* ── Page content ── */}
         <main style={{ flex: 1, overflowY: 'auto', background: mainBg }}>
