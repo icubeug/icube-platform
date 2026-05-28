@@ -4,30 +4,32 @@
   "description": "Full-stack ISP & hotspot management platform — beats XenFi on all features",
   "main": "src/app.js",
   "scripts": {
-    "start":     "node src/app.js",
-    "dev":       "nodemon src/app.js",
-    "migrate":   "node src/schema/migrate.js",
-    "test":      "jest --coverage"
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "migrate": "node src/schema/migrate.js",
+    "test": "jest --coverage"
   },
   "dependencies": {
-    "@anthropic-ai/sdk":   "^0.24.0",
-    "axios":               "^1.7.0",
-    "bcrypt":              "^5.1.0",
-    "dotenv":              "^16.4.0",
-    "express":             "^4.19.0",
-    "ioredis":             "^5.3.0",
-    "jsonwebtoken":        "^9.0.0",
-    "node-cron":           "^3.0.3",
-    "node-routeros":       "^1.6.0",
-    "pg":                  "^8.11.0",
-    "ssh2":                "^1.15.0",
-    "stripe":              "^16.0.0",
-    "uuid":                "^10.0.0",
-    "ws":                  "^8.18.0"
+    "@anthropic-ai/sdk": "^0.24.0",
+    "africastalking": "^0.8.0",
+    "axios": "^1.7.0",
+    "bcrypt": "^5.1.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "ioredis": "^5.3.0",
+    "jsonwebtoken": "^9.0.0",
+    "node-cron": "^3.0.3",
+    "node-routeros": "^1.6.0",
+    "nodemailer": "^8.0.9",
+    "pg": "^8.11.0",
+    "ssh2": "^1.15.0",
+    "stripe": "^16.0.0",
+    "uuid": "^10.0.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "jest":       "^29.7.0",
-    "nodemon":    "^3.1.0",
-    "supertest":  "^7.0.0"
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.0",
+    "supertest": "^7.0.0"
   }
 }

@@ -4,6 +4,7 @@ const bcrypt   = require('bcrypt');
 const jwt      = require('jsonwebtoken');
 const router   = express.Router();
 const { normalizePhone } = require('../utils/phone');
+const { sendOTPEmail }   = require('../notifications/email.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret';
 
@@ -179,10 +180,14 @@ router.post('/login', async (req, res) => {
       role:      admin.role,
     }));
 
-    // Send OTP via SMS
+    // Deliver OTP — email is primary, SMS is best-effort
     const phone = admin.phone || null;
-    const msg   = `Your iCube verification code is: ${otp}. Expires in 10 minutes. Do not share this code.`;
-    await sendSms(phone, msg);
+    const smsMsg = `Your iCube verification code is: ${otp}. Expires in 10 minutes. Do not share this code.`;
+
+    const [emailErr] = await sendOTPEmail(email, otp).then(() => [null]).catch(e => [e]);
+    if (emailErr) console.error('[OTP] email delivery failed:', emailErr.message);
+
+    await sendSms(phone, smsMsg);
 
     // Mask phone for response
     const maskedPhone = phone
@@ -191,7 +196,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       status: 'otp_sent',
-      message: `Verification code sent${maskedPhone ? ` to ${maskedPhone}` : ''}`,
+      message: `Verification code sent to ${email}${maskedPhone ? ` and ${maskedPhone}` : ''}`,
       masked_phone: maskedPhone,
       email, // needed for verify step
     });
@@ -287,8 +292,10 @@ router.post('/resend-otp', async (req, res) => {
       role:      admin.role,
     }));
 
-    const msg = `Your iCube verification code is: ${otp}. Expires in 10 minutes.`;
-    await sendSms(admin.phone, msg);
+    const smsMsg2 = `Your iCube verification code is: ${otp}. Expires in 10 minutes.`;
+    const [emailErr2] = await sendOTPEmail(email, otp).then(() => [null]).catch(e => [e]);
+    if (emailErr2) console.error('[OTP] email delivery failed:', emailErr2.message);
+    await sendSms(admin.phone, smsMsg2);
 
     res.json({ status: 'otp_sent', message: 'New verification code sent.' });
   } catch (err) {
@@ -314,8 +321,10 @@ router.post('/forgot-password', async (req, res) => {
     console.log('[OTP]', email, otp);
     await redis.setex(`reset:${email}`, 600, JSON.stringify({ otp, admin_id: admin.id }));
 
-    const msg = `Your iCube password reset code is: ${otp}. Expires in 10 minutes.`;
-    await sendSms(admin.phone, msg);
+    const resetMsg = `Your iCube password reset code is: ${otp}. Expires in 10 minutes.`;
+    const [emailErr3] = await sendOTPEmail(email, otp).then(() => [null]).catch(e => [e]);
+    if (emailErr3) console.error('[OTP] email delivery failed:', emailErr3.message);
+    await sendSms(admin.phone, resetMsg);
 
     res.json({ status: 'sent', message: 'If that email exists, a reset code was sent.' });
   } catch (err) {

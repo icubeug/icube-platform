@@ -32,6 +32,9 @@ const db = {
 app.locals.db    = db;
 app.locals.redis = redis;
 
+// ── Portal routes (public — captive portal, no tenant middleware) ─────────────
+app.use('/api/portal', require('./portal/portal.routes'));
+
 // ── Public auth routes (no tenant middleware) ─────────────────────────────────
 app.use('/api/auth', require('./auth/auth.routes'));
 
@@ -104,8 +107,9 @@ wss.on('connection', async (ws, req) => {
 });
 
 // ── Scheduled jobs ────────────────────────────────────────────────────────────
-const { runBillingCycle }    = require('./pppoe/pppoe.service');
-const { sweepOfflineRouters } = require('./vpn/vpn.service');
+const { runBillingCycle }                        = require('./pppoe/pppoe.service');
+const { sweepOfflineRouters }                     = require('./vpn/vpn.service');
+const { sweepExpiredVoucherRadiusEntries }         = require('./vouchers/voucher.service');
 
 // PPPoE auto-billing — daily at 07:00 Uganda time (UTC+3 = 04:00 UTC)
 cron.schedule('0 4 * * *', async () => {
@@ -113,7 +117,7 @@ cron.schedule('0 4 * * *', async () => {
   await runBillingCycle(db, redis);
 });
 
-// Voucher expiry sweep — every hour
+// Voucher expiry sweep + RADIUS cleanup — every hour
 cron.schedule('0 * * * *', async () => {
   await db.query(`
     UPDATE vouchers
@@ -121,6 +125,9 @@ cron.schedule('0 * * * *', async () => {
     WHERE status = 'active'
       AND expires_at < NOW()
   `);
+  await sweepExpiredVoucherRadiusEntries(db).catch(err =>
+    console.error('[CRON] RADIUS sweep error:', err.message)
+  );
   await redis.del('ai:site_status');
 });
 
@@ -141,7 +148,12 @@ app.get('/health', async (_, res) => {
   res.json({ status: dbOk && redisOk ? 'ok' : 'degraded', db: dbOk, redis: redisOk, ts: Date.now() });
 });
 
+const { verifySmtp } = require('./notifications/email.service');
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`[ISP Platform] listening on :${PORT}`));
+server.listen(PORT, () => {
+  console.log(`[ISP Platform] listening on :${PORT}`);
+  verifySmtp();
+});
 
 module.exports = { app, server };
