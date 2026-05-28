@@ -1,11 +1,11 @@
 'use client';
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { api, Payment, Voucher, Site, SiteLimit } from '@/lib/api';
+import { api, Payment, Voucher, Site, SiteLimit, Router } from '@/lib/api';
 import type { ChartPoint } from '@/components/admin/RevenueChart';
 import {
   TrendingUp, Download, DollarSign, Users, Cpu, HardDrive,
-  ChevronDown, RefreshCw, Ticket, AlertCircle
+  ChevronDown, RefreshCw, Ticket, AlertCircle, Wifi, WifiOff, Circle,
 } from 'lucide-react';
 
 const RevenueChart = dynamic(() => import('@/components/admin/RevenueChart'), { ssr: false });
@@ -80,6 +80,7 @@ export default function AdminDashboard() {
   const [payments,   setPayments]   = useState<Payment[]>([]);
   const [vouchers,   setVouchers]   = useState<Voucher[]>([]);
   const [sites,      setSites]      = useState<Site[]>([]);
+  const [routers,    setRouters]    = useState<Router[]>([]);
   const [siteLimit,  setSiteLimit]  = useState<SiteLimit>({ max_sites: 5, count: 0 });
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState('');
@@ -87,13 +88,14 @@ export default function AdminDashboard() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, v, s, lim] = await Promise.all([
+      const [p, v, s, lim, r] = await Promise.all([
         api.payments.list(200),
         api.vouchers.list(),
         api.sites.list(),
         api.sites.limit().catch(() => ({ max_sites: 5, count: 0 })),
+        api.routers.list().catch(() => [] as Router[]),
       ]);
-      setPayments(p); setVouchers(v); setSites(s);
+      setPayments(p); setVouchers(v); setSites(s); setRouters(r);
       setSiteLimit({ ...lim, count: lim.count || s.length });
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
@@ -227,33 +229,30 @@ export default function AdminDashboard() {
             <p className="text-[11px] font-medium" style={{ color: '#666' }}>System Insights</p>
             <span className="flex items-center gap-1 text-[10px] font-semibold" style={{ color: '#2563eb' }}>
               <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: '#2563eb' }} />
-              Online
+              {loading ? '…' : `${routers.filter(r => r.vpn_connected).length} online`}
             </span>
           </div>
           <div className="grid grid-cols-3 gap-0 mt-2">
-            {/* Active users */}
+            <div className="text-center">
+              <div className="flex justify-center mb-1">
+                <Wifi size={13} style={{ color: '#555' }} />
+              </div>
+              <p className="text-base font-bold text-white">{loading ? '—' : routers.filter(r => r.vpn_connected).length}</p>
+              <p className="text-[9px]" style={{ color: '#555' }}>Routers</p>
+            </div>
             <div className="text-center">
               <div className="flex justify-center mb-1">
                 <Users size={13} style={{ color: '#555' }} />
               </div>
-              <p className="text-base font-bold text-white">{loading ? '—' : activeVouchers}</p>
-              <p className="text-[9px]" style={{ color: '#555' }}>Active</p>
+              <p className="text-base font-bold text-white">{loading ? '—' : routers.reduce((s, r) => s + (r.active_users || 0), 0)}</p>
+              <p className="text-[9px]" style={{ color: '#555' }}>Users</p>
             </div>
-            {/* CPU */}
             <div className="text-center">
               <div className="flex justify-center mb-1">
                 <Cpu size={13} style={{ color: '#555' }} />
               </div>
-              <p className="text-base font-bold text-white">24%</p>
-              <p className="text-[9px]" style={{ color: '#555' }}>CPU</p>
-            </div>
-            {/* Data */}
-            <div className="text-center">
-              <div className="flex justify-center mb-1">
-                <HardDrive size={13} style={{ color: '#555' }} />
-              </div>
-              <p className="text-base font-bold text-white">1.2<span className="text-xs font-normal" style={{ color: '#666' }}>TB</span></p>
-              <p className="text-[9px]" style={{ color: '#555' }}>Data Usage</p>
+              <p className="text-base font-bold text-white">{loading ? '—' : routers.length ? Math.round(routers.reduce((s, r) => s + (r.cpu_load || 0), 0) / routers.length) : 0}%</p>
+              <p className="text-[9px]" style={{ color: '#555' }}>Avg CPU</p>
             </div>
           </div>
         </StatCard>
@@ -353,6 +352,38 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* ── Router health widget ── */}
+      {!loading && routers.length > 0 && (
+        <div style={{ marginTop: 20, background: '#131313', border: '1px solid #222', borderRadius: 12, padding: '16px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <h2 style={{ fontSize: 13, fontWeight: 700, color: '#fff', margin: 0 }}>Router Health</h2>
+            <a href="/admin/router" style={{ fontSize: 11, color: '#2563eb', textDecoration: 'none' }}>View all →</a>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {routers.slice(0, 6).map(r => {
+              const isOnline = r.vpn_connected;
+              const userPct  = r.max_users ? Math.round((r.active_users || 0) / r.max_users * 100) : 0;
+              return (
+                <a key={r.id} href={`/admin/router/${r.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', padding: '6px 8px', borderRadius: 7, transition: 'background 0.15s' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#1a1a1a')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
+                  <Circle size={8} style={{ color: isOnline ? '#22c55e' : '#ef4444', fill: isOnline ? '#22c55e' : '#ef4444', flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#ccc' }}>{r.name}</span>
+                  {isOnline ? (
+                    <span style={{ fontSize: 11, color: '#888' }}>
+                      {r.active_users || 0} users · {r.cpu_load || 0}% CPU
+                      {userPct >= 85 && <span style={{ marginLeft: 6, color: '#ef4444', fontWeight: 700 }}>⚠ {userPct}%</span>}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: '#555' }}>Offline</span>
+                  )}
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

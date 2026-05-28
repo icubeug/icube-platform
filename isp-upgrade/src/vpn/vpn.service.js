@@ -1,37 +1,127 @@
 // src/vpn/vpn.service.js — VPN heartbeat + MikroTik script generation
 
-const HEARTBEAT_TIMEOUT_SECONDS = 120;
+const HEARTBEAT_TIMEOUT_SECONDS = 300; // 5 minutes — matches 5m scheduler
+const CAPACITY_ALERT_THRESHOLD  = 0.85;
+const CAPACITY_ALERT_COOLDOWN   = 3600; // 1 hour between alerts
 
-async function handleHeartbeat(db, { vpn_username, vpn_ip, stats = {} }) {
-  if (!vpn_username) throw new Error('vpn_username required');
-  const rows = await db.query(`
-    UPDATE routers
-    SET vpn_connected = true,
-        vpn_ip = COALESCE($2, vpn_ip),
-        last_heartbeat_at = NOW()
-    WHERE vpn_username = $1
-    RETURNING id, tenant_id, name, vpn_username, vpn_ip, vpn_connected
-  `, [vpn_username, vpn_ip || null]);
-  if (!rows.length) throw new Error('Router not found for vpn_username: ' + vpn_username);
-  const router = rows[0];
-  if (stats.connected_users != null || stats.cpu_load != null) {
-    await db.query(`
-      INSERT INTO router_metrics
-        (router_id, tenant_id, connected_users, cpu_load, memory_used_mb,
-         rx_bytes_sec, tx_bytes_sec, uptime_seconds, recorded_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
-    `, [
-      router.id, router.tenant_id,
-      stats.connected_users || 0, stats.cpu_load || 0, stats.memory_used_mb || 0,
-      stats.rx_bytes_sec || 0, stats.tx_bytes_sec || 0, stats.uptime_seconds || 0,
-    ]).catch(() => {});
+// ── Token or username based heartbeat ─────────────────────────────────────────
+async function handleHeartbeat(db, body) {
+  const { token, vpn_username, cpu_load, memory_used, active_users, wan_ip } = body;
+
+  let router;
+
+  if (token) {
+    const rows = await db.query(
+      `UPDATE routers SET
+         vpn_connected      = true,
+         last_heartbeat_at  = NOW(),
+         cpu_load           = COALESCE($2, cpu_load),
+         memory_used        = COALESCE($3, memory_used),
+         active_users       = COALESCE($4, active_users),
+         wan_ip             = COALESCE($5::inet, wan_ip),
+         status             = 'online'
+       WHERE router_token = $1
+       RETURNING id, tenant_id, name, router_token, vpn_address, max_users, active_users, last_capacity_alert_at`,
+      [token, cpu_load ?? null, memory_used ?? null, active_users ?? null, wan_ip || null]
+    );
+    if (!rows.length) throw new Error('Router not found for token: ' + token);
+    router = rows[0];
+  } else if (vpn_username) {
+    const rows = await db.query(
+      `UPDATE routers SET
+         vpn_connected      = true,
+         last_heartbeat_at  = NOW(),
+         cpu_load           = COALESCE($2, cpu_load),
+         memory_used        = COALESCE($3, memory_used),
+         active_users       = COALESCE($4, active_users),
+         status             = 'online'
+       WHERE vpn_username = $1
+       RETURNING id, tenant_id, name, router_token, vpn_address, max_users, active_users, last_capacity_alert_at`,
+      [vpn_username, cpu_load ?? null, memory_used ?? null, active_users ?? null]
+    );
+    if (!rows.length) throw new Error('Router not found for vpn_username: ' + vpn_username);
+    router = rows[0];
+  } else {
+    throw new Error('token or vpn_username required');
   }
+
+  // Insert heartbeat record
+  await db.query(`
+    INSERT INTO router_heartbeats
+      (router_id, tenant_id, cpu_load, memory_used, active_users, wan_ip, recorded_at)
+    VALUES ($1, $2, $3, $4, $5, $6::inet, NOW())
+  `, [router.id, router.tenant_id, cpu_load ?? null, memory_used ?? null, active_users ?? null, wan_ip || null]).catch(() => {});
+
+  // Prune heartbeats older than 24h
+  await db.query(
+    `DELETE FROM router_heartbeats WHERE router_id = $1 AND recorded_at < NOW() - INTERVAL '24 hours'`,
+    [router.id]
+  ).catch(() => {});
+
+  // Capacity alert check
+  const maxUsers = parseInt(router.max_users, 10) || 200;
+  const curUsers = parseInt(router.active_users, 10) || 0;
+  const pct      = maxUsers > 0 ? curUsers / maxUsers : 0;
+
+  if (pct >= CAPACITY_ALERT_THRESHOLD) {
+    const lastAlert = router.last_capacity_alert_at;
+    const cooldownOk = !lastAlert ||
+      (Date.now() - new Date(lastAlert).getTime()) > CAPACITY_ALERT_COOLDOWN * 1000;
+
+    if (cooldownOk) {
+      await sendCapacityAlert(db, router, curUsers, maxUsers, pct);
+      await db.query(
+        `UPDATE routers SET last_capacity_alert_at = NOW() WHERE id = $1`,
+        [router.id]
+      ).catch(() => {});
+    }
+  }
+
   return router;
+}
+
+async function sendCapacityAlert(db, router, curUsers, maxUsers, pct) {
+  try {
+    // Get tenant + site info
+    const [tenantRow] = await db.query(
+      `SELECT t.owner_email, t.name AS tenant_name, s.name AS site_name
+       FROM tenants t
+       LEFT JOIN sites s ON s.id = (SELECT site_id FROM routers WHERE id = $2)
+       WHERE t.id = $1`,
+      [router.tenant_id, router.id]
+    );
+
+    // Log to support_notes
+    await db.query(`
+      INSERT INTO support_notes (tenant_id, author_id, note)
+      VALUES ($1, NULL, $2)
+    `, [router.tenant_id,
+      `⚠ Capacity alert: ${router.name} at ${Math.round(pct * 100)}% capacity (${curUsers}/${maxUsers} users)`
+    ]).catch(() => {});
+
+    // Email alert
+    if (tenantRow?.owner_email) {
+      const { sendCapacityAlertEmail } = require('../notifications/email.service');
+      await sendCapacityAlertEmail({
+        to:          tenantRow.owner_email,
+        tenantName:  tenantRow.tenant_name,
+        routerName:  router.name,
+        siteName:    tenantRow.site_name,
+        curUsers,
+        maxUsers,
+        pct:         Math.round(pct * 100),
+      }).catch(err => console.error('[Capacity] email error:', err.message));
+    }
+
+    console.log(`[Capacity] Alert sent for ${router.name}: ${curUsers}/${maxUsers} (${Math.round(pct*100)}%)`);
+  } catch (err) {
+    console.error('[Capacity] alert error:', err.message);
+  }
 }
 
 async function sweepOfflineRouters(db) {
   const rows = await db.query(`
-    UPDATE routers SET vpn_connected = false
+    UPDATE routers SET vpn_connected = false, status = 'offline'
     WHERE vpn_connected = true
       AND last_heartbeat_at < NOW() - ($1 || ' seconds')::INTERVAL
     RETURNING id, name
@@ -52,144 +142,51 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
     pool_start,
     pool_end,
     network_cidr,
-    network_mask,
   } = config;
 
-  // Network values — from tier or config overrides
-  const gw         = gateway      || tier?.gateway    || '192.168.1.1';
+  const gw          = gateway      || tier?.gateway    || '192.168.1.1';
   const netCidr     = network_cidr || tier?.subnet     || '192.168.1.0/24';
   const prefix      = netCidr.split('/')[1] || '24';
   const networkBase = netCidr.split('/')[0];
   const poolS       = pool_start   || tier?.poolStart  || '192.168.1.2';
   const poolE       = pool_end     || tier?.poolEnd    || '192.168.1.254';
 
-  const vpnServer    = platformSettings.icube_vpn_server    || 'vpn.icube.co.ug';
-  const radiusIp     = platformSettings.icube_radius_ip     || '10.0.0.1';
-  const serverIp     = platformSettings.icube_server_ip     || '41.210.0.1';
-  const portalDomain = platformSettings.icube_portal_domain || 'portal.icube.co.ug';
-  const ipsecSecret  = platformSettings.icube_vpn_ipsec_secret || 'icube-ipsec-2024';
-
-  const dnsArr       = dns_servers.split(',').map(d => d.trim());
-  const timestamp    = new Date().toISOString();
+  const serverIp     = platformSettings.icube_server_ip     || '139.84.247.205';
+  const portalDomain = platformSettings.icube_portal_domain || '139.84.247.205';
+  const wgPrivKey    = router.wireguard_private_key;
+  const wgPeerIp     = router.wireguard_peer_ip;
+  const wgServerPub  = process.env.WG_SERVER_PUBLIC_KEY || '<WG_SERVER_PUBLIC_KEY>';
+  const tenantSlug   = router.tenant_slug || 'default';
+  const vpnPort      = router.vpn_port || 51820;
   const isL009       = model?.is_l009 || false;
   const modelName    = model?.name    || 'Custom';
-  const modelSku     = model?.sku     || '';
-  const tierName     = tier?.name     || 'Custom';
-  const routerName   = router.name;
+  const timestamp    = new Date().toISOString();
   const tenant       = tenantName || 'iCube ISP';
 
-  const sep = (title) =>
-    `\n# ${'='.repeat(52)}\n# ${title}\n# ${'='.repeat(52)}`;
-
-  return `${sep('iCube Platform — MikroTik Configuration Script')}
-# Router:    ${routerName}
-# Model:     ${modelName}${modelSku ? ' (' + modelSku + ')' : ''}
-# Tier:      ${tierName}
+  return `# iCube Platform — MikroTik Setup Script
+# Router:    ${router.name}
+# Model:     ${modelName}
 # Tenant:    ${tenant}
 # Generated: ${timestamp}
-# Support:   support@icube.co.ug
-# ${'='.repeat(52)}
-${sep('SECTION: SYSTEM CONFIGURATION')}
-/system identity set name="${routerName}"
+/system identity set name="${router.name}"
 /system clock set time-zone-name=Africa/Kampala
 /system ntp client set enabled=yes server-dns-name=time.google.com
-${sep('SECTION: LAN IP ADDRESS')}
 /ip address add address=${gw}/${prefix} interface=${lan_interface} comment="iCube LAN"
-${sep('SECTION: DHCP SERVER CONFIGURATION')}
 /ip pool add name=icube-hotspot-pool ranges=${poolS}-${poolE}
 /ip dhcp-server add name=icube-dhcp interface=${lan_interface} address-pool=icube-hotspot-pool lease-time=1h disabled=no
-/ip dhcp-server network add address=${networkBase}/${prefix} gateway=${gw} dns-server=${dnsArr.join(',')}
-${sep('SECTION: DNS CONFIGURATION')}
-/ip dns set servers=${dnsArr.join(',')} allow-remote-requests=yes
-${sep('SECTION: NAT MASQUERADE')}
+/ip dhcp-server network add address=${networkBase}/${prefix} gateway=${gw} dns-server=${dns_servers}
+/ip dns set servers=${dns_servers} allow-remote-requests=yes
 /ip firewall nat add chain=srcnat out-interface=${wan_interface} action=masquerade comment="iCube NAT"
-${sep('SECTION: HOTSPOT CONFIGURATION')}
-/ip hotspot profile add name=icube-profile \\
-    hotspot-address=${gw} \\
-    dns-name="${portalDomain}" \\
-    use-radius=yes \\
-    radius-accounting=yes \\
-    login-by=http-chap,http-pap,mac-cookie \\
-    mac-auth-mode=mac-as-username-and-password \\
-    http-cookie-lifetime=1d \\
-    trial-uptime=0s
-
-/ip hotspot add name=icube-hotspot \\
-    interface=${lan_interface} \\
-    address-pool=icube-hotspot-pool \\
-    profile=icube-profile \\
-    idle-timeout=none \\
-    keepalive-timeout=2m \\
-    disabled=no
-${sep('SECTION: RADIUS CONFIGURATION')}
-/radius add service=hotspot,login \\
-    address=${radiusIp} \\
-    secret="${router.radius_secret || 'RADIUS_SECRET_MISSING'}" \\
-    authentication-port=1812 \\
-    accounting-port=1813 \\
-    timeout=3000
+/radius add service=hotspot,login address=${serverIp} secret="${router.radius_secret || 'MISSING'}" authentication-port=1812 accounting-port=1813 timeout=3000
 /radius incoming add accept=yes port=3799
-${sep('SECTION: VPN TUNNEL (L2TP/IPsec)')}
-/interface l2tp-client add \\
-    name=icube-vpn \\
-    connect-to=${vpnServer} \\
-    user="${router.vpn_username || 'VPN_USER_MISSING'}" \\
-    password="${router.vpn_password || 'VPN_PASS_MISSING'}" \\
-    use-ipsec=yes \\
-    ipsec-secret="${ipsecSecret}" \\
-    add-default-route=no \\
-    disabled=no \\
-    comment="iCube VPN Tunnel"
-
-/ip route add dst-address=${serverIp}/32 gateway=${wan_interface} comment="iCube server via WAN"
-/ip route add dst-address=${radiusIp}/32 gateway=icube-vpn comment="RADIUS via VPN"
-${sep('SECTION: API ACCESS CONTROL')}
+${wgPrivKey ? `/interface wireguard add name=icube-vpn private-key="${wgPrivKey}" listen-port=13231 comment="iCube WireGuard VPN"
+/interface wireguard peers add interface=icube-vpn public-key="${wgServerPub}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=10.99.0.0/24,${serverIp}/32 persistent-keepalive=25
+/ip address add address=${wgPeerIp}/24 interface=icube-vpn comment="iCube VPN IP"
+/ip route add dst-address=${serverIp}/32 gateway=${wgPeerIp} comment="iCube Server Route"` : '# WireGuard not provisioned yet'}
+${isL009 ? '/interface ethernet set [find] l2mtu=1598\n/interface bridge set [find] fast-forward=yes' : ''}
 /ip service set api address=${serverIp}/32 disabled=no port=8728
-/ip service set api-ssl disabled=yes
-/ip service disable telnet,ftp,www,ssh,winbox
-${sep('SECTION: FIREWALL RULES')}
-/ip firewall filter add chain=input action=accept \\
-    connection-state=established,related \\
-    comment="Allow established/related"
-/ip firewall filter add chain=input action=accept \\
-    protocol=icmp \\
-    comment="Allow ICMP"
-/ip firewall filter add chain=input action=accept \\
-    src-address=${serverIp} \\
-    comment="Allow iCube management"
-/ip firewall filter add chain=input action=accept \\
-    in-interface=icube-vpn \\
-    comment="Allow VPN traffic"
-/ip firewall filter add chain=input action=drop \\
-    in-interface=${wan_interface} \\
-    comment="Drop WAN unsolicited input"
-${sep('SECTION: WALLED GARDEN')}
-/ip hotspot walled-garden add dst-host="${portalDomain}"
-/ip hotspot walled-garden add dst-host="*.google.com"
-/ip hotspot walled-garden ip add dst-address=${serverIp} action=accept
-${sep('SECTION: HEARTBEAT SCHEDULER')}
-/system scheduler add \\
-    name=icube-heartbeat \\
-    interval=60s \\
-    on-event=":do { /tool fetch url=\\"https://${serverIp}/api/v1/routers/heartbeat\\" http-method=post http-data=\\"{\\\\\"vpn_username\\\\\":\\\\\"${router.vpn_username || ''}\\\\\"}\\" keep-result=no } on-error={}" \\
-    comment="iCube heartbeat"
-${isL009 ? `${sep('SECTION: L009 HARDWARE OFFLOADING')}
-# NOTE: The L009 supports hardware offloading for better performance.
-# These settings reduce CPU load significantly under high user counts.
-/interface ethernet set [find] l2mtu=1598
-/interface bridge set [find] fast-forward=yes
-` : ''}
-# ${'='.repeat(52)}
-# iCube Configuration Complete
-# Router:    ${routerName}
-# Model:     ${modelName}${modelSku ? ' (' + modelSku + ')' : ''}
-# Tenant:    ${tenant}
-# Tier:      ${tierName}  |  Max users: ${tier?.maxUsers || 'custom'}
-# Network:   ${networkBase}/${prefix}  |  Pool: ${poolS}-${poolE}
-# Generated: ${timestamp}
-# Support:   support@icube.co.ug
-# ${'='.repeat(52)}
-:log info "iCube setup complete for ${routerName}"
+/ip service disable telnet,ftp,www,ssh
+:log info "iCube setup complete for ${router.name}"
 `;
 }
 

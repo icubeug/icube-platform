@@ -1,8 +1,161 @@
 // src/multirouter/router.routes.js
-const express = require('express');
-const router  = express.Router();
+const express  = require('express');
+const router   = express.Router();
+const crypto   = require('crypto');
 const { handleHeartbeat, generateMikrotikScript } = require('../vpn/vpn.service');
 const { provisionRouterPeer, getVpnStatus }       = require('../vpn/wireguard.service');
+const { detectRouterTier, generateZeroTouchScript } = require('../routers/router-intelligence');
+
+// POST /api/v1/routers/zero-touch — create router without IP (zero-touch onboarding)
+router.post('/zero-touch', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant_id;
+  const { name, model, site_id } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+
+  try {
+    const tier          = detectRouterTier(model);
+    const radiusSecret  = 'rs-' + crypto.randomBytes(16).toString('hex');
+
+    // Assign next VPN port (server-wide)
+    const [portRow]  = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
+    const vpnPort    = Math.min(parseInt(portRow.next_port, 10), 51920);
+    const vpnAddress = `vpn.icubeug.net:${vpnPort}`;
+
+    // WireGuard keys
+    let privateKey = '', publicKey = '';
+    try {
+      const { execSync } = require('child_process');
+      privateKey = execSync('wg genkey', { encoding: 'utf8' }).trim();
+      publicKey  = execSync(`echo "${privateKey}" | wg pubkey`, { encoding: 'utf8' }).trim();
+    } catch {
+      const buf  = () => crypto.randomBytes(32).toString('base64');
+      privateKey = buf(); publicKey = buf();
+    }
+
+    // Assign peer IP
+    const [peerRow] = await db.query(
+      `SELECT COALESCE(MAX(wireguard_peer_index), 1) + 1 AS next_idx FROM routers`
+    );
+    const peerIdx   = parseInt(peerRow.next_idx, 10);
+    const peerIp    = `10.99.0.${peerIdx}`;
+
+    // Insert router
+    const [row] = await db.query(`
+      INSERT INTO routers
+        (tenant_id, site_id, name, ip_address, brand,
+         radius_secret, vpn_port, vpn_address,
+         wireguard_private_key, wireguard_public_key,
+         wireguard_peer_ip, wireguard_peer_index,
+         subnet_prefix, subnet_mask, network_address, gateway_ip,
+         dhcp_pool_start, dhcp_pool_end, max_users, recommended_users, tier_name,
+         model_name, status)
+      VALUES
+        ($1,$2,$3,'0.0.0.0','mikrotik',
+         $4,$5,$6,
+         $7,$8,
+         $9,$10,
+         $11,$12,$13,$14,
+         $15,$16,$17,$18,$19,
+         $20,'pending')
+      RETURNING *
+    `, [
+      tid, site_id || null, name,
+      radiusSecret, vpnPort, vpnAddress,
+      privateKey, publicKey,
+      peerIp, peerIdx,
+      tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
+      tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users, tier.tier_name,
+      model || null,
+    ]);
+
+    const newRouter = row;
+
+    // Get tenant info for slug
+    const [tenant] = await db.query(`SELECT slug, name FROM tenants WHERE id = $1`, [tid]);
+
+    // Generate zero-touch script
+    const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
+    const script = generateZeroTouchScript({
+      routerName:    name,
+      routerToken:   newRouter.router_token,
+      model:         model || 'Unknown',
+      vpnPort,
+      privateKey,
+      serverPublicKey: serverPubKey,
+      peerIp,
+      radiusSecret,
+      tier,
+      tenantSlug: tenant?.slug || 'default',
+    });
+
+    res.status(201).json({
+      router: newRouter,
+      script,
+      config: {
+        vpn_port:    vpnPort,
+        vpn_address: vpnAddress,
+        peer_ip:     peerIp,
+        radius_secret: radiusSecret,
+        tier: tier.tier_name,
+        network: tier.network,
+        gateway: tier.gateway,
+        max_users: tier.max_users,
+      },
+    });
+  } catch (err) {
+    console.error('[ZeroTouch]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v1/routers/register — phone-home from router after script runs
+router.post('/register', async (req, res) => {
+  const db = req.app.locals.db;
+  const { token, identity, model, serial, wan_ip } = req.body;
+  if (!token) return res.status(400).json({ error: 'token required' });
+
+  try {
+    const [r] = await db.query(`SELECT * FROM routers WHERE router_token = $1`, [token]);
+    if (!r) return res.status(404).json({ error: 'Unknown router token' });
+
+    const tier = detectRouterTier(model || r.model_name);
+
+    await db.query(`
+      UPDATE routers SET
+        status             = 'online',
+        vpn_connected      = true,
+        last_heartbeat_at  = NOW(),
+        model_name         = COALESCE($2, model_name),
+        serial_number      = COALESCE($3, serial_number),
+        wan_ip             = COALESCE($4::inet, wan_ip),
+        subnet_prefix      = $5,
+        subnet_mask        = $6,
+        network_address    = $7,
+        gateway_ip         = $8,
+        dhcp_pool_start    = $9,
+        dhcp_pool_end      = $10,
+        max_users          = $11,
+        recommended_users  = $12,
+        tier_name          = $13
+      WHERE id = $1
+    `, [r.id, model || null, serial || null, wan_ip || null,
+        tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
+        tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users, tier.tier_name]);
+
+    const [tenant] = await db.query(`SELECT slug FROM tenants WHERE id = $1`, [r.tenant_id]);
+
+    res.json({
+      success:       true,
+      radius_secret: r.radius_secret,
+      tenant_slug:   tenant?.slug || '',
+      tier:          tier.tier_name,
+      message:       `Router ${identity || r.name} registered successfully`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // POST /api/v1/routers/heartbeat — called by MikroTik scheduler (no tenant auth)
 router.post('/heartbeat', async (req, res) => {
@@ -343,6 +496,44 @@ router.get('/:id/test-connection', async (req, res) => {
       vpn_connected: r.vpn_connected,
       last_heartbeat_at: r.last_heartbeat_at,
       message: online ? 'Router is online and VPN tunnel is active' : 'Router not reachable — VPN tunnel inactive',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/routers/:id/analytics — 24h heartbeat history
+router.get('/:id/analytics', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant?.id;
+  try {
+    const [r] = await db.query(
+      `SELECT * FROM routers WHERE id = $1 AND (tenant_id = $2 OR $2 IS NULL)`,
+      [req.params.id, tid || null]
+    );
+    if (!r) return res.status(404).json({ error: 'Router not found' });
+
+    const heartbeats = await db.query(`
+      SELECT cpu_load, memory_used, active_users, wan_ip,
+             TO_CHAR(recorded_at AT TIME ZONE 'Africa/Kampala', 'HH24:MI') AS time_label,
+             recorded_at
+      FROM router_heartbeats
+      WHERE router_id = $1 AND recorded_at > NOW() - INTERVAL '24 hours'
+      ORDER BY recorded_at ASC
+    `, [req.params.id]);
+
+    const avgCpu    = heartbeats.length ? Math.round(heartbeats.reduce((s, h) => s + (h.cpu_load || 0), 0) / heartbeats.length) : 0;
+    const peakUsers = heartbeats.length ? Math.max(...heartbeats.map(h => h.active_users || 0)) : 0;
+
+    res.json({
+      router: {
+        id: r.id, name: r.name, model_name: r.model_name, tier_name: r.tier_name,
+        max_users: r.max_users, subnet_prefix: r.subnet_prefix,
+        network_address: r.network_address, gateway_ip: r.gateway_ip,
+        vpn_address: r.vpn_address, status: r.status,
+      },
+      series:   heartbeats,
+      summary:  { avg_cpu: avgCpu, peak_users: peakUsers, total_points: heartbeats.length },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

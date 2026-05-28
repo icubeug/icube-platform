@@ -23,12 +23,31 @@ export interface Site {
 }
 export interface Router {
   id: string; name: string; ip_address: string; api_port: number;
-  status: 'online' | 'offline' | 'unreachable'; brand: string;
-  board_name: string | null; model: string | null; firmware_version: string | null;
-  cpu_load: number; uptime_seconds: number; ssh_port: number;
+  status: 'online' | 'offline' | 'unreachable' | 'pending'; brand: string;
+  board_name: string | null; model: string | null; model_name: string | null;
+  firmware_version: string | null;
+  cpu_load: number; memory_used: number; uptime_seconds: number; ssh_port: number;
   site_id: string | null; site_name: string | null; created_at: string;
   vpn_port: number | null; vpn_address: string | null;
   vpn_connected: boolean; last_heartbeat_at: string | null;
+  active_users: number; max_users: number; recommended_users: number;
+  tier_name: string | null; network_address: string | null;
+  gateway_ip: string | null; dhcp_pool_start: string | null; dhcp_pool_end: string | null;
+  subnet_prefix: number; wan_ip: string | null;
+  router_token: string | null; wireguard_peer_ip: string | null;
+}
+
+export interface RouterHeartbeat {
+  time_label: string; cpu_load: number; memory_used: number;
+  active_users: number; wan_ip: string | null; recorded_at: string;
+}
+
+export interface RouterAnalytics {
+  router: { id: string; name: string; model_name: string | null; tier_name: string | null;
+            max_users: number; subnet_prefix: number; network_address: string | null;
+            gateway_ip: string | null; vpn_address: string | null; status: string; };
+  series: RouterHeartbeat[];
+  summary: { avg_cpu: number; peak_users: number; total_points: number; };
 }
 
 export interface SiteLimit {
@@ -240,13 +259,18 @@ export const api = {
   },
 
   routers: {
-    list: () => req<Router[]>('/routers'),
-    get:  (id: string) => req<Router>(`/routers/${id}`),
-    create: (data: Partial<Router>) =>
+    list:      () => req<Router[]>('/routers'),
+    get:       (id: string) => req<Router>(`/routers/${id}`),
+    create:    (data: Partial<Router>) =>
       req<Router>('/routers', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: Partial<Router>) =>
+    update:    (id: string, data: Partial<Router>) =>
       req<Router>(`/routers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-    metrics: (id: string, range = '1h') => req<RouterMetrics>(`/routers/${id}/metrics?range=${range}`),
+    metrics:   (id: string, range = '1h') => req<RouterMetrics>(`/routers/${id}/metrics?range=${range}`),
+    analytics: (id: string) => req<RouterAnalytics>(`/routers/${id}/analytics`),
+    zeroTouch: (data: { name: string; model?: string; site_id?: string }) =>
+      req<{ router: Router; script: string; config: Record<string, any> }>(
+        '/routers/zero-touch', { method: 'POST', body: JSON.stringify(data) }
+      ),
   },
 
   vouchers: {
