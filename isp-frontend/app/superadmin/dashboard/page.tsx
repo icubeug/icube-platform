@@ -1,9 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Users, TrendingUp, Wifi, Server, ArrowUpRight, Circle } from 'lucide-react';
+import { Users, TrendingUp, Wifi, Server, ArrowUpRight, Circle, Router as RouterIcon } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-function StatCard({ label, value, sub, color = '#1D9E75', icon: Icon }: any) {
+function StatCard({ label, value, sub, color = '#2563eb', icon: Icon }: any) {
   return (
     <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, padding: '18px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -25,7 +25,7 @@ function fmtUGX(n: number) {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  active: '#1D9E75', trial: '#f59e0b', suspended: '#ef4444', cancelled: '#555',
+  active: '#2563eb', trial: '#f59e0b', suspended: '#ef4444', cancelled: '#555',
 };
 
 export default function SuperadminDashboard() {
@@ -50,10 +50,30 @@ export default function SuperadminDashboard() {
     );
   }
 
+  const [routerReqs, setRouterReqs] = useState<any[]>([]);
+  useEffect(() => {
+    const tok = localStorage.getItem('sa_token');
+    fetch('/api/superadmin/router-requests', { headers: { Authorization: `Bearer ${tok}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setRouterReqs(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
+
+  async function markRouterReqHandled(id: string) {
+    const tok = localStorage.getItem('sa_token');
+    await fetch(`/api/superadmin/router-requests/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ status: 'completed' }),
+    });
+    setRouterReqs(prev => prev.map(r => r.id === id ? { ...r, status: 'completed' } : r));
+  }
+
   const stats = data?.stats || {};
   const rev   = data?.revenue || {};
   const tenants = data?.tenants || [];
   const daily = (data?.dailyFees || []).map((d: any) => ({ day: d.day, amount: parseFloat(d.amount) }));
+  const pendingRequests = routerReqs.filter((r: any) => r.status === 'pending' || r.status === 'in_progress');
 
   return (
     <div style={{ minHeight: '100vh', background: '#080808', padding: '24px 28px', color: '#fff' }}>
@@ -71,7 +91,7 @@ export default function SuperadminDashboard() {
         <StatCard label="VPN Routers Online" value={stats.vpn_online || 0} icon={Wifi}
           sub={`of ${stats.total_routers || 0} total routers`} color="#f59e0b" />
         <StatCard label="This Week" value={fmtUGX(parseFloat(rev.fees_this_week || 0))} icon={ArrowUpRight}
-          sub="Platform fees collected" color="#1D9E75" />
+          sub="Platform fees collected" color="#2563eb" />
       </div>
 
       {/* Revenue chart */}
@@ -132,6 +152,61 @@ export default function SuperadminDashboard() {
           })}
         </div>
       </div>
+
+      {/* Router requests */}
+      {pendingRequests.length > 0 && (
+        <div style={{ background: '#111', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 12, overflow: 'hidden', marginBottom: 24 }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid #1a1a1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <RouterIcon size={14} color="#f59e0b" />
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', margin: 0 }}>
+                Pending Router Requests
+                <span style={{ marginLeft: 8, fontSize: 11, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderRadius: 99, padding: '1px 8px', fontWeight: 700 }}>{pendingRequests.length}</span>
+              </p>
+            </div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#0d0d0d' }}>
+                {['Tenant', 'Router Name', 'Model', 'Site', 'Requested', 'Actions'].map(h => (
+                  <th key={h} style={{ padding: '8px 16px', textAlign: 'left', fontSize: 10, color: '#444', fontWeight: 600, textTransform: 'uppercase' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pendingRequests.map((r: any) => (
+                <tr key={r.id} style={{ borderTop: '1px solid #1a1a1a' }}>
+                  <td style={{ padding: '11px 16px' }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: '#fff', margin: 0 }}>{r.tenant_name}</p>
+                    <p style={{ fontSize: 10, color: '#444', margin: 0 }}>{r.tenant_email}</p>
+                  </td>
+                  <td style={{ padding: '11px 16px', fontSize: 12, color: '#ccc' }}>{r.router_name}</td>
+                  <td style={{ padding: '11px 16px', fontSize: 12, color: '#888' }}>{r.router_model || '—'}</td>
+                  <td style={{ padding: '11px 16px', fontSize: 12, color: '#888' }}>{r.site_name || '—'}</td>
+                  <td style={{ padding: '11px 16px', fontSize: 11, color: '#555' }}>
+                    {new Date(r.created_at).toLocaleDateString()}
+                  </td>
+                  <td style={{ padding: '11px 16px' }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <a href={`/superadmin/tenants/${r.tenant_id}`} style={{
+                        fontSize: 11, fontWeight: 600, color: '#2563eb',
+                        background: 'rgba(37,99,235,0.12)', border: '1px solid rgba(37,99,235,0.25)',
+                        borderRadius: 6, padding: '4px 10px', textDecoration: 'none',
+                      }}>
+                        Setup Router
+                      </a>
+                      <button onClick={() => markRouterReqHandled(r.id)} style={{
+                        fontSize: 11, color: '#555', background: '#1a1a1a',
+                        border: '1px solid #2a2a2a', borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+                      }}>Done</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Recent tenants */}
       <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, overflow: 'hidden' }}>

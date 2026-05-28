@@ -417,6 +417,104 @@ router.delete('/staff/:id', requireSuperadmin, async (req, res) => {
   }
 });
 
+// ── Router requests ────────────────────────────────────────────────────────
+router.get('/router-requests', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  try {
+    const rows = await db.query(`
+      SELECT rr.*, t.name AS tenant_name, t.owner_email, t.slug AS tenant_slug
+      FROM router_requests rr
+      JOIN tenants t ON t.id = rr.tenant_id
+      ORDER BY rr.created_at DESC LIMIT 50
+    `);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.patch('/router-requests/:id', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { status } = req.body;
+  try {
+    const [row] = await db.query(`
+      UPDATE router_requests
+      SET status = $1, handled_by = $2, handled_at = NOW()
+      WHERE id = $3 RETURNING *
+    `, [status, req.superadmin.superadmin_id, req.params.id]);
+    res.json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/superadmin/tenants/:tenant_id/routers/zero-touch
+// Superadmin creates a router + ZTP script for a tenant without impersonation
+router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (req, res) => {
+  const db     = req.app.locals.db;
+  const tid    = req.params.tenant_id;
+  const crypto = require('crypto');
+  const { name, model, site_id, vpn_type = 'wireguard' } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+
+  try {
+    const { detectRouterTier, generateZeroTouchScript } = require('../routers/router-intelligence');
+    const tier         = detectRouterTier(model);
+    const radiusSecret = 'rs-' + crypto.randomBytes(16).toString('hex');
+    const bearerToken  = 'icube_' + crypto.randomBytes(32).toString('hex');
+    const installToken = crypto.randomBytes(32).toString('hex');
+
+    const [portRow] = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
+    const vpnPort   = Math.min(parseInt(portRow.next_port, 10), 51920);
+    const vpnAddress = `vpn.icubeug.net:${vpnPort}`;
+
+    let privateKey = '', publicKey = '';
+    try {
+      const { execSync } = require('child_process');
+      privateKey = execSync('wg genkey', { encoding: 'utf8' }).trim();
+      publicKey  = execSync(`echo "${privateKey}" | wg pubkey`, { encoding: 'utf8' }).trim();
+    } catch {
+      const buf  = () => crypto.randomBytes(32).toString('base64');
+      privateKey = buf(); publicKey = buf();
+    }
+
+    const [peerRow] = await db.query(`SELECT COALESCE(MAX(wireguard_peer_index), 1) + 1 AS next_idx FROM routers`);
+    const peerIdx   = parseInt(peerRow.next_idx, 10);
+    const peerIp    = `10.99.0.${peerIdx}`;
+
+    const [row] = await db.query(`
+      INSERT INTO routers
+        (tenant_id, site_id, name, ip_address, brand, radius_secret,
+         vpn_port, vpn_address, wireguard_private_key, wireguard_public_key,
+         wireguard_peer_ip, wireguard_peer_index, subnet_prefix, subnet_mask,
+         network_address, gateway_ip, dhcp_pool_start, dhcp_pool_end,
+         max_users, recommended_users, tier_name, model_name, status,
+         bearer_token, install_token)
+      VALUES ($1,$2,$3,'0.0.0.0','mikrotik',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'pending',$21,$22)
+      RETURNING *
+    `, [tid, site_id||null, name, radiusSecret, vpnPort, vpnAddress,
+        privateKey, publicKey, peerIp, peerIdx,
+        tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
+        tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users,
+        tier.tier_name, model||null, bearerToken, installToken]);
+
+    const newRouter = row;
+    const [tenant]  = await db.query(`SELECT slug, name FROM tenants WHERE id = $1`, [tid]);
+    const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
+
+    const script = generateZeroTouchScript({
+      routerName: name, routerToken: newRouter.router_token, model: model||'Unknown',
+      vpnPort, privateKey, serverPublicKey: serverPubKey, peerIp, radiusSecret,
+      tier, tenantSlug: tenant?.slug||'default', vpnType: vpn_type,
+      vpnUsername: '', vpnPassword: '', ipsecSecret: process.env.VPN_IPSEC_SECRET||'icube-ipsec-2024',
+    });
+
+    const installCmd = `/tool fetch url="https://139.84.247.205/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
+
+    res.status(201).json({ router: newRouter, script, install_command: installCmd, bearer_token: bearerToken, install_token: installToken,
+      config: { vpn_port: vpnPort, vpn_address: vpnAddress, tier: tier.tier_name, network: tier.network, gateway: tier.gateway, max_users: tier.max_users } });
+  } catch (err) {
+    console.error('[SA ZTP]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── VPN / Router overview ──────────────────────────────────────────────────
 router.get('/routers', requireSuperadmin, async (req, res) => {
   const db = req.app.locals.db;

@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   ArrowLeft, Users, Router as RouterIcon, Wifi, WifiOff,
-  MessageSquare, CreditCard,
+  MessageSquare, CreditCard, Plus, Copy, Download, Check, X,
+  ChevronRight, Loader2, Circle,
 } from 'lucide-react';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -63,6 +64,14 @@ export default function TenantDetailPage() {
   const [maxSitesEdit, setMaxSitesEdit] = useState('5');
   const [savingMaxSites, setSavingMaxSites] = useState(false);
   const [maxSitesSaved, setMaxSitesSaved] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<'overview' | 'routers'>('overview');
+  const [showZTPModal, setShowZTPModal] = useState(false);
+  const [ztpForm, setZtpForm]   = useState({ name: '', model: '', site_id: '' });
+  const [ztpSaving, setZtpSaving] = useState(false);
+  const [ztpResult, setZtpResult] = useState<any>(null);
+  const [ztpErr, setZtpErr]       = useState('');
+  const [cmdCopied, setCmdCopied] = useState(false);
 
   async function load() {
     const res = await fetch(`/api/superadmin/tenants/${id}`, {
@@ -288,8 +297,164 @@ export default function TenantDetailPage() {
         ))}
       </div>
 
+      {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', marginBottom: 20 }}>
+        {(['overview', 'routers'] as const).map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            padding: '9px 18px', fontSize: 13, fontWeight: 500, background: 'none', border: 'none',
+            borderBottom: `2px solid ${activeTab === tab ? '#6366f1' : 'transparent'}`,
+            color: activeTab === tab ? '#fff' : '#555', cursor: 'pointer', textTransform: 'capitalize' as const,
+            marginBottom: -1,
+          }}>
+            {tab === 'routers' ? `Routers (${data?.routers?.length || 0})` : 'Overview'}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Routers tab ─────────────────────────────────────────────────────── */}
+      {activeTab === 'routers' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Manage routers for this tenant.</p>
+            <button onClick={() => { setShowZTPModal(true); setZtpResult(null); setZtpErr(''); }} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: '#6366f1', border: 'none', color: '#fff',
+              borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}>
+              <Plus size={13} /> Add Router
+            </button>
+          </div>
+
+          {/* Router list */}
+          <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, overflow: 'hidden' }}>
+            {(!data?.routers || data.routers.length === 0) ? (
+              <div style={{ padding: '40px 24px', textAlign: 'center', color: '#444', fontSize: 12 }}>
+                No routers yet. Click "+ Add Router" to generate a ZTP script.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#0d0d0d' }}>
+                    {['Router', 'VPN Address', 'Status', 'Tier', 'Last seen', 'Setup'].map(h => (
+                      <th key={h} style={{ padding: '8px 16px', textAlign: 'left', fontSize: 10, color: '#444', fontWeight: 600, textTransform: 'uppercase' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.routers.map((r: any) => (
+                    <tr key={r.id} style={{ borderTop: '1px solid #1a1a1a' }}>
+                      <td style={{ padding: '11px 16px' }}>
+                        <p style={{ fontSize: 12, fontWeight: 600, color: '#fff', margin: 0 }}>{r.name}</p>
+                        <p style={{ fontSize: 10, color: '#444', margin: 0 }}>{r.ip_address}</p>
+                      </td>
+                      <td style={{ padding: '11px 16px', fontSize: 11, color: '#60a5fa', fontFamily: 'monospace' }}>
+                        {(r as any).vpn_address || '—'}
+                      </td>
+                      <td style={{ padding: '11px 16px' }}>
+                        {r.vpn_connected
+                          ? <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600 }}>● Online</span>
+                          : <span style={{ fontSize: 11, color: r.setup_completed ? '#f87171' : '#f59e0b', fontWeight: 600 }}>
+                              {r.setup_completed ? '● Offline' : '◎ Pending'}
+                            </span>}
+                      </td>
+                      <td style={{ padding: '11px 16px', fontSize: 11, color: '#555' }}>{(r as any).tier_name || '—'}</td>
+                      <td style={{ padding: '11px 16px', fontSize: 11, color: '#555' }}>
+                        {r.last_heartbeat_at ? new Date(r.last_heartbeat_at).toLocaleString() : 'Never'}
+                      </td>
+                      <td style={{ padding: '11px 16px' }}>
+                        {r.setup_completed
+                          ? <span style={{ fontSize: 10, color: '#22c55e', background: 'rgba(34,197,94,0.1)', borderRadius: 5, padding: '2px 8px' }}>Done ✓</span>
+                          : <span style={{ fontSize: 10, color: '#f59e0b', background: 'rgba(245,158,11,0.1)', borderRadius: 5, padding: '2px 8px' }}>Pending</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── ZTP modal (superadmin adding router for tenant) ───────────────────── */}
+      {showZTPModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9000 }}>
+          <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 14, padding: '28px 32px', width: ztpResult ? 600 : 420, maxWidth: '95vw', maxHeight: '92vh', overflow: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div>
+                <p style={{ fontSize: 15, fontWeight: 700, color: '#fff', margin: 0 }}>Add Router for {tenant.name}</p>
+                <p style={{ fontSize: 12, color: '#555', margin: '3px 0 0' }}>Zero-Touch Provisioning</p>
+              </div>
+              <button onClick={() => setShowZTPModal(false)} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer' }}><X size={16} /></button>
+            </div>
+
+            {!ztpResult ? (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!ztpForm.name.trim()) { setZtpErr('Router name required'); return; }
+                setZtpSaving(true); setZtpErr('');
+                try {
+                  const saToken = localStorage.getItem('sa_token');
+                  const res = await fetch(`/api/superadmin/tenants/${id}/routers/zero-touch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${saToken}` },
+                    body: JSON.stringify({ name: ztpForm.name, model: ztpForm.model || undefined }),
+                  });
+                  const d = await res.json();
+                  if (!res.ok) throw new Error(d.error);
+                  setZtpResult(d);
+                  load();
+                } catch (e: any) { setZtpErr(e.message); }
+                finally { setZtpSaving(false); }
+              }} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {[
+                  { label: 'Router Name *', key: 'name', placeholder: 'e.g. Kireka Main' },
+                  { label: 'Model (optional)', key: 'model', placeholder: 'e.g. RB4011, L009' },
+                ].map(({ label, key, placeholder }) => (
+                  <div key={key}>
+                    <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.06em' }}>{label}</label>
+                    <input style={{ width: '100%', background: '#0f0f0f', border: '1px solid #2a2a2a', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#fff', outline: 'none', boxSizing: 'border-box' as const }}
+                      placeholder={placeholder} value={ztpForm[key as 'name' | 'model']}
+                      onChange={e => setZtpForm(f => ({ ...f, [key]: e.target.value }))} />
+                  </div>
+                ))}
+                {ztpErr && <p style={{ fontSize: 12, color: '#f87171', margin: 0 }}>{ztpErr}</p>}
+                <button type="submit" disabled={ztpSaving} style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '10px', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: ztpSaving ? 0.75 : 1 }}>
+                  {ztpSaving ? <><Loader2 size={13} className="animate-spin" /> Generating…</> : <>Generate ZTP Script <ChevronRight size={13} /></>}
+                </button>
+              </form>
+            ) : (
+              <div>
+                <div style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 9, padding: '12px 14px', marginBottom: 14 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', margin: '0 0 3px' }}>Script generated — send to tenant</p>
+                  <p style={{ fontSize: 12, color: '#555', margin: 0 }}>Copy the command below and send it to the tenant via WhatsApp or email.</p>
+                </div>
+                <div style={{ background: '#080808', border: '1px solid #1a1a1a', borderRadius: 8, padding: '12px 14px', fontFamily: 'monospace', fontSize: 11, color: '#a3e635', lineHeight: 1.65, wordBreak: 'break-all', marginBottom: 12 }}>
+                  {ztpResult.install_command}
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                  <button onClick={() => { navigator.clipboard.writeText(ztpResult.install_command); setCmdCopied(true); setTimeout(() => setCmdCopied(false), 2500); }} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: cmdCopied ? 'rgba(99,102,241,0.15)' : '#1a1a1a', border: `1px solid ${cmdCopied ? '#6366f1' : '#2a2a2a'}`, color: cmdCopied ? '#a5b4fc' : '#888', borderRadius: 7, padding: '8px 0', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                    {cmdCopied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy Command</>}
+                  </button>
+                  <button onClick={() => { const blob = new Blob([ztpResult.script], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'icube-setup.rsc'; a.click(); URL.revokeObjectURL(url); }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#888', borderRadius: 7, padding: '8px 14px', fontSize: 12, cursor: 'pointer' }}>
+                    <Download size={12} /> Download .rsc
+                  </button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+                  {['vpn_port','tier','max_users'].map(k => (
+                    <div key={k} style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 7, padding: '8px 10px' }}>
+                      <p style={{ fontSize: 9, color: '#444', margin: '0 0 2px', textTransform: 'uppercase' as const }}>{k.replace(/_/g,' ')}</p>
+                      <p style={{ fontSize: 12, color: '#aaa', margin: 0, fontFamily: 'monospace' }}>{String(ztpResult.config?.[k] ?? '—')}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── 2-col grid ──────────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      {activeTab === 'overview' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
 
         {/* Admins */}
         <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 12, overflow: 'hidden' }}>
@@ -394,7 +559,8 @@ export default function TenantDetailPage() {
           </div>
         </div>
 
-      </div>
+      </div>}
+
     </div>
   );
 }

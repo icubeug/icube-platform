@@ -71,6 +71,13 @@ export interface ApiCredentials {
   has_token: boolean;
 }
 
+export interface RouterRequest {
+  id: string; tenant_id: string; tenant_name: string; tenant_email: string;
+  router_name: string; router_model: string | null; site_name: string | null;
+  notes: string | null; status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  created_at: string; handled_at: string | null;
+}
+
 export interface TenantCredentials {
   slug: string;
   api_token: string | null;
@@ -395,6 +402,12 @@ export const api = {
       req<Paginated<PlatformTransaction>>(`/billing/transactions${qs(params ?? {})}`),
     payments:     (params?: { page?: number; per_page?: number; status?: string }) =>
       req<Paginated<BillingInvoice> & { account_credit: number }>(`/billing/payments${qs(params ?? {})}`),
+  },
+
+  routerRequests: {
+    create: (data: { router_name: string; router_model?: string; site_name?: string; notes?: string }) =>
+      req<RouterRequest>('/router-requests', { method: 'POST', body: JSON.stringify(data) }),
+    list: () => req<RouterRequest[]>('/router-requests'),
   },
 
   settings: {
