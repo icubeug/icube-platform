@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { api, Voucher, Package } from '@/lib/api';
+import { api, Voucher, Package, Site } from '@/lib/api';
 import {
   Ticket, Plus, Search, Copy, Check, X, Download,
   ChevronDown, Loader2, AlertCircle,
@@ -34,7 +34,7 @@ function StatusBadge({ status }: { status: string }) {
     display: 'inline-block', letterSpacing: 0.5,
   };
   if (s === 'ACTIVE' || s === 'PROVISIONED')
-    return <span style={{ ...style, background: '#0d2e1e', border: '1px solid #1a4a30', color: '#1D9E75' }}>{s}</span>;
+    return <span style={{ ...style, background: '#0d1a2e', border: '1px solid #1e3a6e', color: '#2563eb' }}>{s}</span>;
   if (s === 'EXPIRED')
     return <span style={{ ...style, background: '#2a1515', border: '1px solid #4a2020', color: '#f87171' }}>{s}</span>;
   if (s === 'USED')
@@ -53,7 +53,7 @@ function CopyBtn({ text }: { text: string }) {
     <button onClick={copy} style={{
       background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#555',
     }}>
-      {copied ? <Check size={11} color="#1D9E75" /> : <Copy size={11} />}
+      {copied ? <Check size={11} color="#2563eb" /> : <Copy size={11} />}
     </button>
   );
 }
@@ -63,8 +63,8 @@ function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
   return (
     <div style={{
       position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-      background: '#0d2e1e', border: '1px solid #1D9E75', borderRadius: 10,
-      padding: '10px 16px', color: '#1D9E75', fontSize: 13, fontWeight: 500,
+      background: '#0d1a2e', border: '1px solid #2563eb', borderRadius: 10,
+      padding: '10px 16px', color: '#2563eb', fontSize: 13, fontWeight: 500,
       display: 'flex', alignItems: 'center', gap: 8,
     }}>
       <Check size={14} />{msg}
@@ -80,6 +80,7 @@ export default function VouchersPage() {
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [trashVouchers, setTrashVouchers] = useState<Voucher[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
@@ -89,24 +90,27 @@ export default function VouchersPage() {
   const [toast, setToast] = useState('');
 
   // Generate form state
-  const [genPackageId, setGenPackageId] = useState('');
-  const [genQuantity, setGenQuantity] = useState(5);
-  const [genNote, setGenNote] = useState('');
-  const [genChannel, setGenChannel] = useState<'admin' | 'system'>('admin');
-  const [generating, setGenerating] = useState(false);
-  const [genErr, setGenErr] = useState('');
+  const [genPackageId,  setGenPackageId]  = useState('');
+  const [genSiteId,     setGenSiteId]     = useState('');
+  const [genQuantity,   setGenQuantity]   = useState(5);
+  const [genNote,       setGenNote]       = useState('');
+  const [genChannel,    setGenChannel]    = useState<'admin' | 'system'>('admin');
+  const [generating,    setGenerating]    = useState(false);
+  const [genErr,        setGenErr]        = useState('');
+  const [genResult,     setGenResult]     = useState<{ generated: number; codes: string[] } | null>(null);
 
   async function loadData() {
     setLoading(true); setError('');
     try {
-      const [v, pkgsRaw] = await Promise.all([
+      const [v, pkgsRaw, s] = await Promise.all([
         api.vouchers.list(),
         api.packages.list({ per_page: 100 }) as Promise<any>,
+        api.sites.list(),
       ]);
       setVouchers(v);
       const pkgs: Package[] = Array.isArray(pkgsRaw) ? pkgsRaw : (pkgsRaw.data ?? []);
       setPackages(pkgs);
-      // Trash = deleted items (filter locally since API doesn't support it directly)
+      setSites(s);
       setTrashVouchers(v.filter(x => x.deleted_at));
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
@@ -117,21 +121,26 @@ export default function VouchersPage() {
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
     if (!genPackageId) return setGenErr('Please select a package');
-    setGenerating(true); setGenErr('');
+    if (!genSiteId)    return setGenErr('Please select a site');
+    setGenerating(true); setGenErr(''); setGenResult(null);
     try {
-      const pkg = packages.find(p => p.id === genPackageId);
       const res = await api.vouchers.generate({
         package_id: genPackageId,
-        site_id: pkg?.site_id ?? '',
-        count: genQuantity,
-        note: genNote || undefined,
+        site_id:    genSiteId,
+        count:      genQuantity,
+        note:       genNote || undefined,
       });
-      setToast(`Generated ${res.generated} vouchers`);
-      setGenerateOpen(false);
-      setGenPackageId(''); setGenQuantity(5); setGenNote('');
+      setGenResult({ generated: res.generated, codes: res.vouchers.map(v => v.code) });
       loadData();
     } catch (e: any) { setGenErr(e.message); }
     finally { setGenerating(false); }
+  }
+
+  function resetGenerateForm() {
+    setGenerateOpen(false);
+    setGenPackageId(''); setGenSiteId('');
+    setGenQuantity(5); setGenNote('');
+    setGenResult(null); setGenErr('');
   }
 
   function exportCSV() {
@@ -182,7 +191,7 @@ export default function VouchersPage() {
 
       {/* Header */}
       <div className="flex items-center gap-3 mb-5">
-        <Ticket size={18} color="#1D9E75" />
+        <Ticket size={18} color="#2563eb" />
         <span className="text-xl font-bold text-white">Vouchers</span>
         <div style={{ flex: 1 }} />
       </div>
@@ -197,7 +206,7 @@ export default function VouchersPage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
-              width: '100%', background: '#1a1a1a', border: '1px solid #2a2a2a',
+              width: '100%', background: '#131313', border: '1px solid #2a2a2a',
               borderRadius: 8, padding: '7px 12px 7px 30px', color: '#aaa', fontSize: 12,
               outline: 'none',
             }}
@@ -207,14 +216,14 @@ export default function VouchersPage() {
         <span style={{ fontSize: 11, color: '#555' }}>From</span>
         <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
           style={{
-            background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8,
+            background: '#131313', border: '1px solid #2a2a2a', borderRadius: 8,
             padding: '6px 10px', color: '#aaa', fontSize: 12, outline: 'none',
           }}
         />
         <span style={{ fontSize: 11, color: '#555' }}>To</span>
         <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
           style={{
-            background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8,
+            background: '#131313', border: '1px solid #2a2a2a', borderRadius: 8,
             padding: '6px 10px', color: '#aaa', fontSize: 12, outline: 'none',
           }}
         />
@@ -223,7 +232,7 @@ export default function VouchersPage() {
           onClick={() => setGenerateOpen(true)}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            background: '#1D9E75', border: 'none', color: '#fff',
+            background: '#2563eb', border: 'none', color: '#fff',
             borderRadius: 8, fontSize: 12, fontWeight: 600, padding: '7px 14px', cursor: 'pointer',
           }}>
           <Plus size={13} /> Generate
@@ -231,7 +240,7 @@ export default function VouchersPage() {
 
         <button style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#aaa',
+          background: '#131313', border: '1px solid #2a2a2a', color: '#aaa',
           borderRadius: 8, fontSize: 12, padding: '7px 12px', cursor: 'pointer',
         }}>
           <Download size={12} /> Download by Note
@@ -239,7 +248,7 @@ export default function VouchersPage() {
 
         <button onClick={exportCSV} style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#aaa',
+          background: '#131313', border: '1px solid #2a2a2a', color: '#aaa',
           borderRadius: 8, fontSize: 12, padding: '7px 12px', cursor: 'pointer',
         }}>
           <Download size={12} /> Export CSV
@@ -251,7 +260,7 @@ export default function VouchersPage() {
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             fontSize: 12, fontWeight: 500, padding: '8px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${tab === t.key ? '#1D9E75' : 'transparent'}`,
+            border: 'none', borderBottom: `2px solid ${tab === t.key ? '#2563eb' : 'transparent'}`,
             color: tab === t.key ? '#fff' : '#666', cursor: 'pointer', transition: 'all 150ms',
           }}>{t.label}</button>
         ))}
@@ -268,10 +277,10 @@ export default function VouchersPage() {
       )}
 
       {/* Table */}
-      <div style={{ background: '#1a1a1a', border: '1px solid #222', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 12, overflow: 'hidden' }}>
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 160 }}>
-            <Loader2 size={22} color="#1D9E75" className="animate-spin" />
+            <Loader2 size={22} color="#2563eb" className="animate-spin" />
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center' }}>
@@ -279,7 +288,7 @@ export default function VouchersPage() {
             <div style={{ color: '#555', fontSize: 13 }}>No vouchers found</div>
             {tab === 'admin' && (
               <button onClick={() => setGenerateOpen(true)} style={{
-                marginTop: 14, background: '#1D9E75', border: 'none', color: '#fff',
+                marginTop: 14, background: '#2563eb', border: 'none', color: '#fff',
                 borderRadius: 8, fontSize: 12, fontWeight: 600, padding: '8px 16px',
                 cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
               }}>
@@ -307,10 +316,10 @@ export default function VouchersPage() {
                     onMouseEnter={e => (e.currentTarget.style.background = '#1e1e1e')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                     <td style={{ padding: '9px 12px' }}>
-                      <input type="checkbox" style={{ accentColor: '#1D9E75' }} />
+                      <input type="checkbox" style={{ accentColor: '#2563eb' }} />
                     </td>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
-                      <span style={{ color: '#1D9E75', fontFamily: 'monospace', fontSize: 12 }}>
+                      <span style={{ color: '#2563eb', fontFamily: 'monospace', fontSize: 12 }}>
                         {v.code}
                       </span>
                       <CopyBtn text={v.code} />
@@ -355,26 +364,71 @@ export default function VouchersPage() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9000,
         }}>
           <div style={{
-            background: '#1a1a1a', border: '1px solid #222', borderRadius: 14,
+            background: '#131313', border: '1px solid #222', borderRadius: 14,
             padding: '24px 28px', width: 420, maxWidth: '95vw',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Generate Vouchers</span>
-              <button onClick={() => setGenerateOpen(false)} style={{
-                background: 'none', border: 'none', color: '#555', cursor: 'pointer',
-              }}>
+              <button onClick={resetGenerateForm} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer' }}>
                 <X size={16} />
               </button>
             </div>
 
+            {/* ── Success result ── */}
+            {genResult ? (
+              <div>
+                <div style={{
+                  background: 'rgba(37,99,235,0.08)', border: '1px solid rgba(37,99,235,0.25)',
+                  borderRadius: 10, padding: '14px 16px', marginBottom: 14,
+                }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: '#2563eb', margin: '0 0 4px' }}>
+                    ✓ {genResult.generated} vouchers generated
+                  </p>
+                  <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Codes are now in your voucher list below.</p>
+                </div>
+                <div style={{
+                  background: '#0a0a0a', border: '1px solid #1e1e1e', borderRadius: 8,
+                  padding: '10px 14px', maxHeight: 180, overflowY: 'auto', marginBottom: 14,
+                  fontFamily: 'monospace', fontSize: 12,
+                }}>
+                  {genResult.codes.map((code, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 0', borderBottom: i < genResult.codes.length - 1 ? '1px solid #1a1a1a' : 'none' }}>
+                      <span style={{ color: '#2563eb' }}>{code}</span>
+                      <CopyBtn text={code} />
+                    </div>
+                  ))}
+                </div>
+                <button onClick={resetGenerateForm} style={{
+                  width: '100%', background: '#131313', border: '1px solid #2a2a2a', color: '#aaa',
+                  borderRadius: 8, fontSize: 13, padding: '9px', cursor: 'pointer',
+                }}>
+                  Close
+                </button>
+              </div>
+            ) : (
             <form onSubmit={handleGenerate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Package</label>
+                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Site *</label>
+                <select
+                  value={genSiteId} onChange={e => setGenSiteId(e.target.value)}
+                  style={{
+                    width: '100%', background: '#111', border: '1px solid #2a2a2a',
+                    borderRadius: 8, padding: '8px 12px', color: genSiteId ? '#fff' : '#555', fontSize: 13, outline: 'none',
+                  }}>
+                  <option value="">— Select site —</option>
+                  {sites.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}{s.location ? ` (${s.location})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Package *</label>
                 <select
                   value={genPackageId} onChange={e => setGenPackageId(e.target.value)}
                   style={{
                     width: '100%', background: '#111', border: '1px solid #2a2a2a',
-                    borderRadius: 8, padding: '8px 12px', color: '#aaa', fontSize: 13, outline: 'none',
+                    borderRadius: 8, padding: '8px 12px', color: genPackageId ? '#fff' : '#555', fontSize: 13, outline: 'none',
                   }}>
                   <option value="">— Select package —</option>
                   {packages.map(p => (
@@ -411,32 +465,28 @@ export default function VouchersPage() {
                 <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 8 }}>Channel</label>
                 <div style={{ display: 'flex', gap: 10 }}>
                   {(['admin', 'system'] as const).map(ch => (
-                    <label key={ch} style={{
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      cursor: 'pointer', fontSize: 12, color: '#aaa',
-                    }}>
-                      <input
-                        type="radio" name="channel" value={ch}
+                    <label key={ch} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: '#aaa' }}>
+                      <input type="radio" name="channel" value={ch}
                         checked={genChannel === ch} onChange={() => setGenChannel(ch)}
-                        style={{ accentColor: '#1D9E75' }}
-                      />
+                        style={{ accentColor: '#2563eb' }} />
                       {ch === 'admin' ? 'Admin Generated' : 'System Generated'}
                     </label>
                   ))}
                 </div>
               </div>
 
-              {genErr && <div style={{ fontSize: 12, color: '#f87171' }}>{genErr}</div>}
+              {genErr && <div style={{ fontSize: 12, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6 }}><AlertCircle size={12} />{genErr}</div>}
 
               <button type="submit" disabled={generating} style={{
-                background: '#1D9E75', border: 'none', color: '#fff', borderRadius: 8,
+                background: '#2563eb', border: 'none', color: '#fff', borderRadius: 8,
                 fontSize: 13, fontWeight: 600, padding: '10px', cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 opacity: generating ? 0.7 : 1,
               }}>
-                {generating ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : 'Generate'}
+                {generating ? <><Loader2 size={14} className="animate-spin" /> Generating…</> : 'Generate Vouchers'}
               </button>
             </form>
+            )}
           </div>
         </div>
       )}
@@ -466,7 +516,7 @@ function VoucherActions({ voucher, onRefresh }: { voucher: Voucher; onRefresh: (
       <button
         onClick={() => setOpen(v => !v)}
         style={{
-          background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#888',
+          background: '#131313', border: '1px solid #2a2a2a', color: '#888',
           borderRadius: 6, fontSize: 13, padding: '3px 10px', cursor: 'pointer',
         }}>
         …

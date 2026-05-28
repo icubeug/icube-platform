@@ -1,16 +1,16 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { api, Site } from '@/lib/api';
-import { Building2, Plus, MapPin, AlertCircle, RefreshCw, Pencil, CircleDot } from 'lucide-react';
+import { Building2, Plus, MapPin, AlertCircle, RefreshCw, CircleDot, Router } from 'lucide-react';
 
 export default function SitesPage() {
-  const [sites, setSites]   = useState<Site[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState('');
+  const [sites,    setSites]    = useState<Site[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm]     = useState({ name: '', location: '' });
-  const [saving, setSaving] = useState(false);
-  const [formErr, setFormErr] = useState('');
+  const [form,     setForm]     = useState({ name: '', location: '' });
+  const [saving,   setSaving]   = useState(false);
+  const [formErr,  setFormErr]  = useState('');
 
   async function load() {
     setLoading(true); setError('');
@@ -23,130 +23,186 @@ export default function SitesPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim()) return setFormErr('Site name is required');
+    if (!form.name.trim()) { setFormErr('Site name is required'); return; }
     setSaving(true); setFormErr('');
     try {
       await api.sites.create({ name: form.name.trim(), location: form.location.trim() });
-      setForm({ name: '', location: '' }); setShowForm(false);
+      setForm({ name: '', location: '' });
+      setShowForm(false);
       load();
     } catch (e: any) { setFormErr(e.message); }
     finally { setSaving(false); }
   }
 
   async function toggleStatus(site: Site) {
-    const next = site.status === 'active' ? 'inactive' : 'active';
     try {
-      await api.sites.update(site.id, { status: next });
+      await api.sites.update(site.id, { status: site.status === 'active' ? 'inactive' : 'active' });
       load();
     } catch {}
   }
 
+  const inp: React.CSSProperties = {
+    width: '100%', background: '#111', border: '1px solid #2a2a2a',
+    borderRadius: 8, padding: '8px 12px', fontSize: 13, color: '#fff',
+    outline: 'none', boxSizing: 'border-box',
+  };
+
   return (
-    <div className="p-8 max-w-5xl space-y-6">
+    <div style={{ minHeight: '100vh', background: '#0f0f0f', padding: '24px 28px' }}>
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Sites</h1>
-          <p className="text-slate-500 text-sm mt-0.5">Manage your hotspot locations</p>
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fff', margin: 0 }}>Sites</h1>
+          <p style={{ fontSize: 13, color: '#555', margin: '4px 0 0' }}>Manage your hotspot locations</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={load} className="btn-secondary flex items-center gap-2 text-sm">
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={load} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: '#131313', border: '1px solid #2a2a2a', color: '#888',
+            borderRadius: 8, padding: '7px 12px', fontSize: 12, cursor: 'pointer',
+          }}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
-          <button onClick={() => setShowForm(v => !v)} className="btn-primary flex items-center gap-2 text-sm">
-            <Plus size={16} /> Add Site
+          <button onClick={() => setShowForm(v => !v)} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: '#2563eb', border: 'none', color: '#fff',
+            borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>
+            <Plus size={14} /> Add Site
           </button>
         </div>
       </div>
 
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3 text-red-700 text-sm">
-          <AlertCircle size={16} />{error}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16,
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+          borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#f87171',
+        }}>
+          <AlertCircle size={14} /> {error}
         </div>
       )}
 
-      {/* Add form */}
+      {/* Create form */}
       {showForm && (
-        <form onSubmit={handleCreate} className="card p-6 space-y-4">
-          <h2 className="font-semibold text-slate-700">New Site</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <form onSubmit={handleCreate} style={{
+          background: '#131313', border: '1px solid #222', borderRadius: 12,
+          padding: '20px 22px', marginBottom: 20,
+        }}>
+          <p style={{ fontSize: 14, fontWeight: 600, color: '#fff', margin: '0 0 16px' }}>New Site</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Site Name *</label>
-              <input className="input" placeholder="e.g. Kampala CBD" value={form.name}
+              <label style={{ display: 'block', fontSize: 11, color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>
+                Site Name *
+              </label>
+              <input style={inp} placeholder="e.g. Kampala CBD" value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Location</label>
-              <input className="input" placeholder="e.g. Kampala, Uganda" value={form.location}
+              <label style={{ display: 'block', fontSize: 11, color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>
+                Location
+              </label>
+              <input style={inp} placeholder="e.g. Kampala, Uganda" value={form.location}
                 onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
             </div>
           </div>
-          {formErr && <p className="text-red-600 text-xs">{formErr}</p>}
-          <div className="flex gap-2">
-            <button type="submit" className="btn-primary text-sm" disabled={saving}>
-              {saving ? <><span className="spinner mr-2" />Saving…</> : 'Create Site'}
+          {formErr && <p style={{ fontSize: 12, color: '#f87171', margin: '0 0 12px' }}>{formErr}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" disabled={saving} style={{
+              background: '#2563eb', border: 'none', color: '#fff', borderRadius: 8,
+              padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              opacity: saving ? 0.7 : 1,
+            }}>
+              {saving ? 'Saving…' : 'Create Site'}
             </button>
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary text-sm">Cancel</button>
+            <button type="button" onClick={() => setShowForm(false)} style={{
+              background: '#1c1c1c', border: '1px solid #252525', color: '#888', borderRadius: 8,
+              padding: '8px 18px', fontSize: 13, cursor: 'pointer',
+            }}>Cancel</button>
           </div>
         </form>
       )}
 
       {/* Sites grid */}
-      {loading
-        ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1,2,3].map(i => (
-              <div key={i} className="card p-6 animate-pulse space-y-3">
-                <div className="h-4 bg-slate-100 rounded w-3/4" />
-                <div className="h-3 bg-slate-100 rounded w-1/2" />
-              </div>
-            ))}
-          </div>
-        : sites.length === 0
-          ? (
-            <div className="card p-16 flex flex-col items-center text-center">
-              <Building2 size={48} className="text-slate-200 mb-4" />
-              <p className="font-semibold text-slate-600">No sites yet</p>
-              <p className="text-slate-400 text-sm mt-1">Add your first hotspot location to get started</p>
-              <button onClick={() => setShowForm(true)} className="btn-primary mt-4 text-sm flex items-center gap-2">
-                <Plus size={16} /> Add Site
-              </button>
+      {loading ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+          {[1, 2, 3].map(i => (
+            <div key={i} style={{ background: '#131313', border: '1px solid #1e1e1e', borderRadius: 12, padding: '20px', height: 160 }}>
+              <div style={{ height: 14, background: '#1a1a1a', borderRadius: 4, width: '60%', marginBottom: 10 }} />
+              <div style={{ height: 11, background: '#1a1a1a', borderRadius: 4, width: '40%' }} />
             </div>
-          )
-          : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {sites.map(site => (
-                <div key={site.id} className="card p-5 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-brand-green/10 flex items-center justify-center">
-                      <Building2 size={18} className="text-brand-green" />
-                    </div>
-                    <button onClick={() => toggleStatus(site)}
-                      className={site.status === 'active' ? 'badge-green cursor-pointer' : 'badge-slate cursor-pointer'}>
-                      <CircleDot size={9} />
-                      {site.status}
-                    </button>
-                  </div>
-                  <h3 className="font-semibold text-slate-800">{site.name}</h3>
-                  {site.location && (
-                    <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                      <MapPin size={10} />{site.location}
-                    </p>
-                  )}
-                  <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 gap-2 text-center">
-                    <div>
-                      <p className="text-xl font-bold text-slate-800">{site.router_count ?? 0}</p>
-                      <p className="text-xs text-slate-400">Routers</p>
-                    </div>
-                    <div>
-                      <p className="text-xl font-bold text-emerald-600">{site.active_vouchers ?? 0}</p>
-                      <p className="text-xs text-slate-400">Active vouchers</p>
-                    </div>
-                  </div>
+          ))}
+        </div>
+      ) : sites.length === 0 ? (
+        <div style={{
+          background: '#131313', border: '1px solid #1e1e1e', borderRadius: 12,
+          padding: '64px 24px', textAlign: 'center',
+        }}>
+          <Building2 size={40} color="#333" style={{ margin: '0 auto 12px' }} />
+          <p style={{ fontSize: 14, fontWeight: 600, color: '#555', margin: '0 0 4px' }}>No sites yet</p>
+          <p style={{ fontSize: 12, color: '#444', margin: '0 0 16px' }}>Add your first hotspot location to get started</p>
+          <button onClick={() => setShowForm(true)} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            background: '#2563eb', border: 'none', color: '#fff',
+            borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>
+            <Plus size={14} /> Add Site
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+          {sites.map(site => (
+            <div key={site.id} style={{
+              background: '#131313', border: '1px solid #1e1e1e', borderRadius: 12,
+              padding: '18px 20px', transition: 'border-color 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = '#2a2a2a')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = '#1e1e1e')}>
+
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{
+                  width: 38, height: 38, borderRadius: 10,
+                  background: 'rgba(37,99,235,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Building2 size={17} color="#2563eb" />
                 </div>
-              ))}
+                <button onClick={() => toggleStatus(site)} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '3px 9px', borderRadius: 99, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: 'none',
+                  background: site.status === 'active' ? 'rgba(34,197,94,0.12)' : '#1c1c1c',
+                  color: site.status === 'active' ? '#22c55e' : '#555',
+                }}>
+                  <CircleDot size={8} />
+                  {site.status}
+                </button>
+              </div>
+
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#fff', margin: '0 0 4px' }}>{site.name}</p>
+              {site.location && (
+                <p style={{ fontSize: 12, color: '#555', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <MapPin size={10} /> {site.location}
+                </p>
+              )}
+
+              <div style={{ borderTop: '1px solid #1e1e1e', paddingTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, textAlign: 'center' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 2 }}>
+                    <Router size={11} color="#555" />
+                    <p style={{ fontSize: 18, fontWeight: 700, color: '#fff', margin: 0 }}>{site.router_count ?? 0}</p>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Routers</p>
+                </div>
+                <div>
+                  <p style={{ fontSize: 18, fontWeight: 700, color: '#2563eb', margin: '0 0 2px' }}>{site.active_vouchers ?? 0}</p>
+                  <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Active vouchers</p>
+                </div>
+              </div>
             </div>
-          )
-      }
+          ))}
+        </div>
+      )}
     </div>
   );
 }

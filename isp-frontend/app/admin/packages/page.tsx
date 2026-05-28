@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react';
 import { api, Package, PPPoEPlan } from '@/lib/api';
 import { Search, LayoutGrid, MoreHorizontal, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { TENANT_ID } from '@/lib/api';
 
 function fmtUGX(n: number) {
   return 'UGX ' + new Intl.NumberFormat('en-UG').format(Math.round(n));
@@ -66,11 +65,7 @@ export default function PackagesPage() {
 
   async function handleToggleStatus(pkg: Package) {
     try {
-      await fetch(`/api/v1/packages/${pkg.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': TENANT_ID },
-        body: JSON.stringify({ active: !pkg.active }),
-      });
+      await api.packages.update(pkg.id, { active: !pkg.active });
       setPackages(prev => prev.map(p => p.id === pkg.id ? { ...p, active: !p.active } : p));
     } catch (e: any) { alert(e.message); }
   }
@@ -91,11 +86,7 @@ export default function PackagesPage() {
       if (form.upload_mbps) body.upload_mbps = Number(form.upload_mbps);
       if (form.data_limit_mb) body.data_limit_mb = Number(form.data_limit_mb);
 
-      await fetch('/api/v1/packages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': TENANT_ID },
-        body: JSON.stringify(body),
-      });
+      await api.packages.create(body);
       setCreateOpen(false);
       setForm({ name: '', price_ugx: '', duration_hrs: '', speed_mbps: '', upload_mbps: '', agent_commission_ugx: '', data_limit_mb: '' });
       load();
@@ -114,7 +105,7 @@ export default function PackagesPage() {
       <div className="flex items-center gap-0 mb-4" style={{ borderBottom: '1px solid #222' }}>
         <button onClick={() => setTab('hotspot')}
           className="flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium transition-colors"
-          style={tab === 'hotspot' ? { color: '#fff', borderBottom: '2px solid #1D9E75' } : { color: '#666', borderBottom: '2px solid transparent' }}>
+          style={tab === 'hotspot' ? { color: '#fff', borderBottom: '2px solid #2563eb' } : { color: '#666', borderBottom: '2px solid transparent' }}>
           Hotspot
           <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: '#1e1e1e', color: '#888' }}>
             {packages.length}
@@ -122,7 +113,7 @@ export default function PackagesPage() {
         </button>
         <button onClick={() => setTab('pppoe')}
           className="flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium transition-colors"
-          style={tab === 'pppoe' ? { color: '#fff', borderBottom: '2px solid #1D9E75' } : { color: '#666', borderBottom: '2px solid transparent' }}>
+          style={tab === 'pppoe' ? { color: '#fff', borderBottom: '2px solid #2563eb' } : { color: '#666', borderBottom: '2px solid transparent' }}>
           PPPoE Plans
           <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: '#1e1e1e', color: '#888' }}>
             {pppoePackages.length}
@@ -132,7 +123,7 @@ export default function PackagesPage() {
 
       {/* Top controls */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: '#1a1a1a', border: '1px solid #222' }}>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: '#131313', border: '1px solid #222' }}>
           <Search size={13} color="#555" />
           <input
             value={search}
@@ -144,17 +135,17 @@ export default function PackagesPage() {
         <div className="flex items-center gap-2">
           <button onClick={() => setCreateOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium text-white"
-            style={{ background: '#1D9E75' }}>
+            style={{ background: '#2563eb' }}>
             + Create Package
           </button>
-          <button className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[#888]" style={{ background: '#1a1a1a', border: '1px solid #222' }}>
+          <button className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[#888]" style={{ background: '#131313', border: '1px solid #222' }}>
             <LayoutGrid size={13} />
           </button>
         </div>
       </div>
 
       {/* Table card */}
-      <div style={{ background: '#1a1a1a', border: '1px solid #222', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 12, overflow: 'hidden' }}>
         {loading ? (
           <div className="flex items-center justify-center py-16 text-[#555] text-sm">Loading...</div>
         ) : error ? (
@@ -171,9 +162,9 @@ export default function PackagesPage() {
             <tbody>
               {filteredPackages.map(pkg => (
                 <tr key={pkg.id} style={{ borderBottom: '1px solid #1e1e1e' }} className="hover:bg-white/[0.02] transition-colors">
-                  <td className="px-4 py-3"><input type="checkbox" className="accent-[#1D9E75] w-3.5 h-3.5" /></td>
+                  <td className="px-4 py-3"><input type="checkbox" className="accent-[#2563eb] w-3.5 h-3.5" /></td>
                   <td className="px-4 py-3 text-[13px] font-semibold text-white">{pkg.name}</td>
-                  <td className="px-4 py-3 text-[13px] font-bold" style={{ color: '#1D9E75' }}>
+                  <td className="px-4 py-3 text-[13px] font-bold" style={{ color: '#2563eb' }}>
                     {fmtUGX(pkg.price_ugx)}
                   </td>
                   <td className="px-4 py-3 text-[12px]" style={{ color: '#aaa' }}>{fmtDuration(pkg.duration_hrs)}</td>
@@ -187,7 +178,7 @@ export default function PackagesPage() {
                   <td className="px-4 py-3">
                     <button onClick={() => handleToggleStatus(pkg)}
                       className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                      style={{ background: pkg.active ? '#1D9E75' : '#333' }}>
+                      style={{ background: pkg.active ? '#2563eb' : '#333' }}>
                       <span className="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"
                         style={{ transform: pkg.active ? 'translateX(18px)' : 'translateX(2px)' }} />
                     </button>
@@ -229,14 +220,14 @@ export default function PackagesPage() {
             <tbody>
               {filteredPppoe.map(plan => (
                 <tr key={plan.id} style={{ borderBottom: '1px solid #1e1e1e' }} className="hover:bg-white/[0.02] transition-colors">
-                  <td className="px-4 py-3"><input type="checkbox" className="accent-[#1D9E75] w-3.5 h-3.5" /></td>
+                  <td className="px-4 py-3"><input type="checkbox" className="accent-[#2563eb] w-3.5 h-3.5" /></td>
                   <td className="px-4 py-3 text-[13px] font-semibold text-white">{plan.name}</td>
                   <td className="px-4 py-3 text-[12px]" style={{ color: '#aaa' }}>{plan.download_mbps} Mbps</td>
                   <td className="px-4 py-3 text-[12px]" style={{ color: '#aaa' }}>{plan.upload_mbps} Mbps</td>
-                  <td className="px-4 py-3 text-[13px] font-bold" style={{ color: '#1D9E75' }}>{fmtUGX(plan.price_ugx)}</td>
+                  <td className="px-4 py-3 text-[13px] font-bold" style={{ color: '#2563eb' }}>{fmtUGX(plan.price_ugx)}</td>
                   <td className="px-4 py-3 text-[12px] capitalize" style={{ color: '#aaa' }}>{plan.billing_cycle}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 rounded-full text-[11px] ${plan.active ? 'bg-[#1D9E75]/15 text-[#34d399]' : 'bg-[#1e1e1e] text-[#666]'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] ${plan.active ? 'bg-[#2563eb]/15 text-[#34d399]' : 'bg-[#1e1e1e] text-[#666]'}`}>
                       {plan.active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
@@ -271,7 +262,7 @@ export default function PackagesPage() {
       {/* Create Package Modal */}
       {createOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div style={{ background: '#1a1a1a', border: '1px solid #222', borderRadius: 16, padding: '24px', width: 440 }}>
+          <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 16, padding: '24px', width: 440 }}>
             <div className="flex items-center justify-between mb-5">
               <span className="text-base font-bold text-white">Create Package</span>
               <button onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-white/10 text-[#666]">
@@ -309,7 +300,7 @@ export default function PackagesPage() {
               </button>
               <button onClick={handleCreate} disabled={creating}
                 className="px-4 py-2 rounded-lg text-[12px] font-medium text-white disabled:opacity-60"
-                style={{ background: '#1D9E75' }}>
+                style={{ background: '#2563eb' }}>
                 {creating ? 'Creating...' : 'Create Package'}
               </button>
             </div>

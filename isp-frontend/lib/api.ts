@@ -1,6 +1,18 @@
 // lib/api.ts — typed API client; all calls proxy through Next.js → backend :3000
 
-export const TENANT_ID = 'ebdf3b5c-f960-4ba6-bb15-739980f2a0a3';
+/** Read tenant ID from localStorage (set on login). Falls back to env / legacy key. */
+export function getTenantId(): string {
+  if (typeof window === 'undefined') return '';
+  return (
+    localStorage.getItem('icube_tenant_id') ||
+    localStorage.getItem('tenant_id') ||
+    ''
+  );
+}
+
+/** @deprecated — use getTenantId() for dynamic reads */
+export const TENANT_ID = '';
+
 const BASE = '/api/v1';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -137,10 +149,18 @@ async function req<T>(
   opts: RequestInit & { agentToken?: string } = {}
 ): Promise<T> {
   const { agentToken, ...fetchOpts } = opts;
+  // Prefer icube_token (new) then fall back to legacy auth_token
+  const adminToken =
+    (typeof window !== 'undefined' && (localStorage.getItem('icube_token') || localStorage.getItem('auth_token'))) || '';
+  const tenantId = getTenantId();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Tenant-ID': TENANT_ID,
-    ...(agentToken ? { Authorization: `Bearer ${agentToken}` } : {}),
+    ...(tenantId ? { 'X-Tenant-ID': tenantId } : {}),
+    ...(agentToken
+      ? { Authorization: `Bearer ${agentToken}` }
+      : adminToken
+      ? { Authorization: `Bearer ${adminToken}` }
+      : {}),
     ...(fetchOpts.headers as Record<string, string> | undefined),
   };
   const res = await fetch(`${BASE}${path}`, { ...fetchOpts, headers });
@@ -151,6 +171,39 @@ async function req<T>(
     throw new Error(msg);
   }
   try { return JSON.parse(text) as T; } catch { return text as unknown as T; }
+}
+
+/**
+ * Low-level fetch helper — attaches Bearer token and X-Tenant-ID from
+ * localStorage. Use this for one-off calls; prefer the typed `api.*`
+ * methods for structured endpoints.
+ */
+export async function apiCall(path: string, options: RequestInit = {}): Promise<Response> {
+  if (typeof window === 'undefined') return fetch(path, options);
+  const token    = localStorage.getItem('icube_token') || localStorage.getItem('auth_token') || '';
+  const tenantId = localStorage.getItem('icube_tenant_id') || localStorage.getItem('tenant_id') || '';
+  return fetch(`/api/v1${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token    ? { Authorization: `Bearer ${token}` }  : {}),
+      ...(tenantId ? { 'X-Tenant-ID': tenantId }           : {}),
+      ...(options.headers as Record<string, string> | undefined),
+    },
+  });
+}
+
+/** Clear all auth state from localStorage + cookie, then redirect to login */
+export function logout(redirectTo = '/auth/login') {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('icube_token');
+  localStorage.removeItem('icube_tenant_id');
+  localStorage.removeItem('icube_user');
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('tenant_id');
+  // Clear the middleware cookie
+  document.cookie = 'icube_token=; path=/; max-age=0; SameSite=Lax';
+  window.location.href = redirectTo;
 }
 
 function qs(params: Record<string, string | number | boolean | undefined | null>) {
