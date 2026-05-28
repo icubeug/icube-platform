@@ -128,18 +128,29 @@ function RouterCard({ router, onViewAnalytics }: { router: Router; onViewAnalyti
 }
 
 function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: () => void; onDone: () => void }) {
-  const [form,     setForm]     = useState({ name: '', model: '', site_id: '' });
-  const [saving,   setSaving]   = useState(false);
-  const [err,      setErr]      = useState('');
-  const [result,   setResult]   = useState<{ script: string; config: any } | null>(null);
-  const [copied,   setCopied]   = useState(false);
+  const [form,    setForm]    = useState({ name: '', model: '', site_id: '', vpn_type: 'wireguard' as 'wireguard' | 'l2tp' });
+  const [saving,  setSaving]  = useState(false);
+  const [err,     setErr]     = useState('');
+  const [result,  setResult]  = useState<{ script: string; config: any } | null>(null);
+  const [copied,  setCopied]  = useState(false);
+
+  // Tier 1-2 (legacy_vpn) models benefit from L2TP option; Tier 3-5 WireGuard-only
+  const modelLower = form.model.toLowerCase();
+  const isLegacyModel = !form.model || (
+    ['rb941','rb931','rb951','rb952','rb750','hap lite','hap mini','hap ac lite','hex lite','hex s',
+     'hap ac','rb962','rbd53','rb2011','map','cap','rb951g'].some(m => modelLower.includes(m))
+  );
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name) { setErr('Router name required'); return; }
     setSaving(true); setErr('');
     try {
-      const res = await api.routers.zeroTouch({ name: form.name, model: form.model || undefined, site_id: form.site_id || undefined });
+      const res = await api.routers.zeroTouch({
+        name: form.name, model: form.model || undefined,
+        site_id: form.site_id || undefined,
+        vpn_type: form.vpn_type,
+      } as any);
       setResult({ script: res.script, config: res.config });
       onDone();
     } catch (e: any) { setErr(e.message); }
@@ -182,6 +193,37 @@ function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: ()
               <input style={inp} placeholder="e.g. RB4011" value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
               <p style={{ fontSize: 11, color: '#555', margin: '4px 0 0' }}>Auto-detects tier and assigns subnet size</p>
             </div>
+
+            <div>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>VPN Type</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setForm(f => ({ ...f, vpn_type: 'wireguard' }))} style={{
+                  flex: 1, padding: '8px 0', borderRadius: 7, fontSize: 12, cursor: 'pointer',
+                  background: form.vpn_type === 'wireguard' ? 'rgba(37,99,235,0.18)' : '#111',
+                  border: `1px solid ${form.vpn_type === 'wireguard' ? '#2563eb' : '#2a2a2a'}`,
+                  color: form.vpn_type === 'wireguard' ? '#60a5fa' : '#666', fontWeight: 600,
+                }}>
+                  WireGuard<br />
+                  <span style={{ fontSize: 10, fontWeight: 400 }}>RouterOS v7+</span>
+                </button>
+                <button type="button" onClick={() => setForm(f => ({ ...f, vpn_type: 'l2tp' }))}
+                  disabled={!isLegacyModel}
+                  style={{
+                    flex: 1, padding: '8px 0', borderRadius: 7, fontSize: 12, cursor: isLegacyModel ? 'pointer' : 'not-allowed',
+                    background: form.vpn_type === 'l2tp' ? 'rgba(245,158,11,0.15)' : '#111',
+                    border: `1px solid ${form.vpn_type === 'l2tp' ? '#f59e0b' : '#2a2a2a'}`,
+                    color: form.vpn_type === 'l2tp' ? '#fcd34d' : isLegacyModel ? '#666' : '#333', fontWeight: 600,
+                    opacity: !isLegacyModel ? 0.4 : 1,
+                  }}>
+                  L2TP/IPsec<br />
+                  <span style={{ fontSize: 10, fontWeight: 400 }}>RouterOS v6</span>
+                </button>
+              </div>
+              {!isLegacyModel && form.model && (
+                <p style={{ fontSize: 11, color: '#555', margin: '4px 0 0' }}>Tier 3–5 hardware runs RouterOS v7+ — WireGuard recommended</p>
+              )}
+            </div>
+
             <div>
               <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Site</label>
               <select style={inp} value={form.site_id} onChange={e => setForm(f => ({ ...f, site_id: e.target.value }))}>

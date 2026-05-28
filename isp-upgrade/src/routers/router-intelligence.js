@@ -7,6 +7,7 @@ const ROUTER_TIERS = {
     network: '192.168.1.0', gateway: '192.168.1.1',
     pool_start: '192.168.1.2', pool_end: '192.168.1.254',
     max_users: 200, recommended_users: 150, tier_name: 'SOHO',
+    legacy_vpn: true, // ROS v6 common on these models
   },
   tier2: {
     models: ['hAP ac','RB962','RBD53','RB2011','mAP','cAP','RB951G'],
@@ -14,6 +15,7 @@ const ROUTER_TIERS = {
     network: '10.10.0.0', gateway: '10.10.0.1',
     pool_start: '10.10.0.2', pool_end: '10.10.1.254',
     max_users: 400, recommended_users: 300, tier_name: 'Medium',
+    legacy_vpn: true, // ROS v6 possible on these models
   },
   tier3: {
     models: ['RB3011','RB4011','L009','RB1100','CCR1009'],
@@ -51,24 +53,65 @@ function detectRouterTier(model) {
 function generateZeroTouchScript({
   routerName, routerToken, model, vpnPort, privateKey, serverPublicKey,
   peerIp, radiusSecret, tier, tenantSlug,
+  vpnType = 'wireguard', // 'wireguard' | 'l2tp'
+  vpnUsername = '', vpnPassword = '', ipsecSecret = 'icube-ipsec-2024',
 }) {
-  const SERVER_IP   = '139.84.247.205';
-  const t           = tier || ROUTER_TIERS.tier1;
-  const isL009      = model && /L009/i.test(model);
+  const SERVER_IP = '139.84.247.205';
+  const t         = tier || ROUTER_TIERS.tier1;
+  const isL009    = model && /L009/i.test(model);
+  const useL2TP   = vpnType === 'l2tp';
+
+  // ── RouterOS version check block ──────────────────────────────────────────
+  const rosVersionCheck = `# ============================================
+# ROUTEROS VERSION CHECK
+# ============================================
+:local rosver [/system resource get version]
+:log info "RouterOS version: \$rosver"
+:if ([:pick \$rosver 0 1] < "7") do={
+  :log warning "RouterOS v7+ recommended for WireGuard. Current: \$rosver"
+  :log warning "If WireGuard fails, re-run with L2TP/IPsec mode."
+}`;
+
+  // ── WireGuard availability guard ─────────────────────────────────────────
+  const wgAvailabilityCheck = `
+# ============================================
+# ENABLE WIREGUARD PACKAGE (if not installed)
+# ============================================
+/system package update check-for-updates
+:if ([/interface wireguard print count-only] = 0) do={
+  :log info "WireGuard not available — please update RouterOS to v7+"
+}`;
+
+  // ── VPN section ───────────────────────────────────────────────────────────
+  const vpnSection = useL2TP ? `
+# ── L2TP/IPsec VPN (RouterOS v6 compatible) ───────────────────
+/interface l2tp-client add name=icube-vpn \\
+  connect-to=vpn.icubeug.net \\
+  user="${vpnUsername}" \\
+  password="${vpnPassword}" \\
+  ipsec-secret="${ipsecSecret}" \\
+  use-ipsec=yes \\
+  disabled=no \\
+  comment="iCube VPN"
+/ip route add dst-address=${SERVER_IP}/32 gateway=icube-vpn comment="iCube Server Route"` : `
+# ── WireGuard VPN (RouterOS v7+) ───────────────────────────────
+${wgAvailabilityCheck}
+/interface wireguard add name=icube-vpn private-key="${privateKey}" listen-port=13231 comment="iCube VPN"
+/interface wireguard peers add interface=icube-vpn public-key="${serverPublicKey}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=10.99.0.0/24,${SERVER_IP}/32 persistent-keepalive=25 comment="iCube Server"
+/ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
+/ip route add dst-address=${SERVER_IP}/32 gateway=${peerIp} comment="iCube Server Route"`;
 
   return `# ================================================================
 # iCube Router Setup — ${routerName}
 # Model: ${model || 'Unknown'}  Tier: ${t.tier_name}  Max users: ${t.max_users}
+# VPN:   ${useL2TP ? 'L2TP/IPsec (RouterOS v6)' : `WireGuard port ${vpnPort} (RouterOS v7+)`}
 # ================================================================
+
+${rosVersionCheck}
 /system identity set name="${routerName}"
 /system clock set time-zone-name=Africa/Kampala
 /system ntp client set enabled=yes server-dns-name=time.google.com
-
-# ── WireGuard VPN ──────────────────────────────────────────────
-/interface wireguard add name=icube-vpn private-key="${privateKey}" listen-port=13231 comment="iCube VPN"
-/interface wireguard peers add interface=icube-vpn public-key="${serverPublicKey}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=10.99.0.0/24,${SERVER_IP}/32 persistent-keepalive=25 comment="iCube Server"
-/ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
-/ip route add dst-address=${SERVER_IP}/32 gateway=${peerIp} comment="iCube Server Route"
+${vpnSection}
 
 # ── LAN / DHCP ──────────────────────────────────────────────────
 /ip pool add name=icube-pool ranges=${t.pool_start}-${t.pool_end}

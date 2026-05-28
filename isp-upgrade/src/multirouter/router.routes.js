@@ -10,7 +10,7 @@ const { detectRouterTier, generateZeroTouchScript } = require('../routers/router
 router.post('/zero-touch', async (req, res) => {
   const db  = req.app.locals.db;
   const tid = req.tenant_id;
-  const { name, model, site_id } = req.body;
+  const { name, model, site_id, vpn_type = 'wireguard' } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
   try {
@@ -86,7 +86,11 @@ router.post('/zero-touch', async (req, res) => {
       peerIp,
       radiusSecret,
       tier,
-      tenantSlug: tenant?.slug || 'default',
+      tenantSlug:  tenant?.slug || 'default',
+      vpnType:     vpn_type,
+      vpnUsername: newRouter.vpn_username || '',
+      vpnPassword: newRouter.vpn_password || '',
+      ipsecSecret: process.env.VPN_IPSEC_SECRET || 'icube-ipsec-2024',
     });
 
     res.status(201).json({

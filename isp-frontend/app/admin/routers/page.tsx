@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { api, Router, Site } from '@/lib/api';
-import { Router as RouterIcon, Plus, AlertCircle, RefreshCw, Server, Wifi, WifiOff, Circle } from 'lucide-react';
+import { Router as RouterIcon, Plus, AlertCircle, RefreshCw, Server, Circle } from 'lucide-react';
 
 function timeAgo(d: string | null): string {
   if (!d) return 'Never';
@@ -92,18 +92,6 @@ export default function RoutersPage() {
             <Plus size={14} /> Add Router
           </button>
         </div>
-      </div>
-
-      {/* DNS note */}
-      <div style={{
-        background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.18)',
-        borderRadius: 9, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#60a5fa',
-        display: 'flex', alignItems: 'center', gap: 8,
-      }}>
-        <Wifi size={13} />
-        <span>
-          <strong>DNS required:</strong> Add a Cloudflare A record — Type: A, Name: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4 }}>vpn</code>, Value: <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4 }}>139.84.247.205</code> — to enable <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4 }}>vpn.icubeug.net</code>
-        </span>
       </div>
 
       {/* Error */}
