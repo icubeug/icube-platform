@@ -54,6 +54,22 @@ export interface SiteLimit {
   max_sites: number;
   count: number;
 }
+
+export interface ZeroTouchResult {
+  router: Router;
+  script: string;
+  install_command: string;
+  bearer_token: string;
+  install_token: string;
+  config: Record<string, any>;
+}
+
+export interface ApiCredentials {
+  tenant_slug: string;
+  api_token_prefix: string | null;
+  api_token_full: string | null;
+  has_token: boolean;
+}
 export interface Voucher {
   id: string; code: string; status: 'unused' | 'active' | 'expired' | 'used';
   package_name: string | null; site_name: string | null; expires_at: string | null;
@@ -267,10 +283,8 @@ export const api = {
       req<Router>(`/routers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     metrics:   (id: string, range = '1h') => req<RouterMetrics>(`/routers/${id}/metrics?range=${range}`),
     analytics: (id: string) => req<RouterAnalytics>(`/routers/${id}/analytics`),
-    zeroTouch: (data: { name: string; model?: string; site_id?: string }) =>
-      req<{ router: Router; script: string; config: Record<string, any> }>(
-        '/routers/zero-touch', { method: 'POST', body: JSON.stringify(data) }
-      ),
+    zeroTouch: (data: { name: string; model?: string; site_id?: string; vpn_type?: string }) =>
+      req<ZeroTouchResult>('/routers/zero-touch', { method: 'POST', body: JSON.stringify(data) }),
   },
 
   vouchers: {
@@ -373,6 +387,8 @@ export const api = {
   },
 
   settings: {
+    getApiCredentials:   () => req<ApiCredentials>('/settings/api-credentials'),
+    regenerateApiToken:  () => req<{ api_token: string }>('/settings/api-credentials/regenerate', { method: 'POST' }),
     getGeneral: () => req<HotspotSettings>('/settings/general'),
     putGeneral: (data: Partial<HotspotSettings>) =>
       req<HotspotSettings>('/settings/general', { method: 'PUT', body: JSON.stringify(data) }),

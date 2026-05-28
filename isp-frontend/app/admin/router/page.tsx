@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
-import { api, Router, Site } from '@/lib/api';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { api, Router, Site, ZeroTouchResult } from '@/lib/api';
 import {
   Wifi, WifiOff, Circle, AlertTriangle, RefreshCw, Plus, Server,
-  Cpu, Users, Activity, Clock, Layers, Copy, Check,
+  Cpu, Users, Activity, Copy, Check, Download, ChevronRight,
+  CheckCircle2, Loader2, X,
 } from 'lucide-react';
 
 function timeAgo(d: string | null): string {
@@ -127,136 +128,304 @@ function RouterCard({ router, onViewAnalytics }: { router: Router; onViewAnalyti
   );
 }
 
-function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: () => void; onDone: () => void }) {
-  const [form,    setForm]    = useState({ name: '', model: '', site_id: '', vpn_type: 'wireguard' as 'wireguard' | 'l2tp' });
-  const [saving,  setSaving]  = useState(false);
-  const [err,     setErr]     = useState('');
-  const [result,  setResult]  = useState<{ script: string; config: any } | null>(null);
-  const [copied,  setCopied]  = useState(false);
+// ── Step indicator ────────────────────────────────────────────────────────────
+function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+  return (
+    <div style={{
+      width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: done ? '#2563eb' : active ? 'rgba(37,99,235,0.2)' : '#1a1a1a',
+      border: `2px solid ${done || active ? '#2563eb' : '#2a2a2a'}`,
+      fontSize: 11, fontWeight: 700, color: done ? '#fff' : active ? '#2563eb' : '#444',
+    }}>
+      {done ? <Check size={12} /> : n}
+    </div>
+  );
+}
 
-  // Tier 1-2 (legacy_vpn) models benefit from L2TP option; Tier 3-5 WireGuard-only
-  const modelLower = form.model.toLowerCase();
-  const isLegacyModel = !form.model || (
+// ── Zero-Touch Modal (3-step enterprise flow) ─────────────────────────────────
+function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: () => void; onDone: () => void }) {
+  const [step,       setStep]       = useState<1 | 2 | 3>(1);
+  const [form,       setForm]       = useState({ name: '', model: '', site_id: '', vpn_type: 'wireguard' as 'wireguard' | 'l2tp' });
+  const [saving,     setSaving]     = useState(false);
+  const [err,        setErr]        = useState('');
+  const [ztResult,   setZtResult]   = useState<ZeroTouchResult | null>(null);
+  const [cmdCopied,  setCmdCopied]  = useState(false);
+  const [polling,    setPolling]    = useState(false);
+  const [connected,  setConnected]  = useState<Router | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const modelLower     = form.model.toLowerCase();
+  const isLegacyModel  = !form.model || (
     ['rb941','rb931','rb951','rb952','rb750','hap lite','hap mini','hap ac lite','hex lite','hex s',
      'hap ac','rb962','rbd53','rb2011','map','cap','rb951g'].some(m => modelLower.includes(m))
   );
 
-  async function submit(e: React.FormEvent) {
+  // Start polling when step 2 begins
+  useEffect(() => {
+    if (step !== 2 || !ztResult) return;
+    setPolling(true);
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await api.routers.get(ztResult.router.id);
+        if (r.status === 'online' || r.vpn_connected) {
+          clearInterval(pollRef.current!);
+          setPolling(false);
+          setConnected(r);
+          setStep(3);
+          onDone();
+        }
+      } catch {}
+    }, 10_000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [step, ztResult]);
+
+  async function generate(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name) { setErr('Router name required'); return; }
+    if (!form.name.trim()) { setErr('Router name is required'); return; }
     setSaving(true); setErr('');
     try {
       const res = await api.routers.zeroTouch({
-        name: form.name, model: form.model || undefined,
-        site_id: form.site_id || undefined,
-        vpn_type: form.vpn_type,
-      } as any);
-      setResult({ script: res.script, config: res.config });
-      onDone();
+        name: form.name.trim(), model: form.model || undefined,
+        site_id: form.site_id || undefined, vpn_type: form.vpn_type,
+      });
+      setZtResult(res);
+      setStep(2);
     } catch (e: any) { setErr(e.message); }
     finally { setSaving(false); }
   }
 
-  function copy() {
-    if (result) { navigator.clipboard.writeText(result.script); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  function copyCmd() {
+    if (!ztResult) return;
+    navigator.clipboard.writeText(ztResult.install_command);
+    setCmdCopied(true);
+    setTimeout(() => setCmdCopied(false), 2500);
   }
 
-  function download() {
-    if (!result) return;
-    const blob = new Blob([result.script], { type: 'text/plain' });
+  function downloadRsc() {
+    if (!ztResult) return;
+    const blob = new Blob([ztResult.script], { type: 'text/plain' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    a.href     = url; a.download = `icube-setup-${form.name}.rsc`; a.click();
+    a.href = url; a.download = `icube-setup-${form.name.replace(/\s+/g,'-')}.rsc`; a.click();
     URL.revokeObjectURL(url);
   }
 
-  const inp: React.CSSProperties = { width: '100%', background: '#111', border: '1px solid #2a2a2a', borderRadius: 7, padding: '8px 12px', fontSize: 13, color: '#fff', outline: 'none', boxSizing: 'border-box' };
+  const inp: React.CSSProperties = {
+    width: '100%', background: '#0f0f0f', border: '1px solid #2a2a2a',
+    borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#fff',
+    outline: 'none', boxSizing: 'border-box',
+  };
+
+  const STEP_LABELS = ['Configure', 'Install', 'Connected'];
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9000 }}>
-      <div style={{ background: '#131313', border: '1px solid #222', borderRadius: 14, padding: '24px 28px', width: result ? 640 : 420, maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
-            {result ? '✓ Script Generated — Paste into MikroTik Terminal' : 'Zero-Touch Router Setup'}
-          </span>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 18 }}>×</button>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9000 }}>
+      <div style={{
+        background: '#131313', border: '1px solid #222', borderRadius: 16,
+        padding: '28px 32px', width: step === 2 ? 620 : 440,
+        maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto',
+        transition: 'width 0.3s',
+      }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <div>
+            <p style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: 0 }}>Add Router</p>
+            <p style={{ fontSize: 12, color: '#555', margin: '2px 0 0' }}>Zero-Touch Provisioning</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: 4, display: 'flex' }}>
+            <X size={16} />
+          </button>
         </div>
 
-        {!result ? (
-          <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Router Name *</label>
-              <input style={inp} placeholder="e.g. Kireka Main" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Model (optional)</label>
-              <input style={inp} placeholder="e.g. RB4011" value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
-              <p style={{ fontSize: 11, color: '#555', margin: '4px 0 0' }}>Auto-detects tier and assigns subnet size</p>
-            </div>
-
-            <div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>VPN Type</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={() => setForm(f => ({ ...f, vpn_type: 'wireguard' }))} style={{
-                  flex: 1, padding: '8px 0', borderRadius: 7, fontSize: 12, cursor: 'pointer',
-                  background: form.vpn_type === 'wireguard' ? 'rgba(37,99,235,0.18)' : '#111',
-                  border: `1px solid ${form.vpn_type === 'wireguard' ? '#2563eb' : '#2a2a2a'}`,
-                  color: form.vpn_type === 'wireguard' ? '#60a5fa' : '#666', fontWeight: 600,
-                }}>
-                  WireGuard<br />
-                  <span style={{ fontSize: 10, fontWeight: 400 }}>RouterOS v7+</span>
-                </button>
-                <button type="button" onClick={() => setForm(f => ({ ...f, vpn_type: 'l2tp' }))}
-                  disabled={!isLegacyModel}
-                  style={{
-                    flex: 1, padding: '8px 0', borderRadius: 7, fontSize: 12, cursor: isLegacyModel ? 'pointer' : 'not-allowed',
-                    background: form.vpn_type === 'l2tp' ? 'rgba(245,158,11,0.15)' : '#111',
-                    border: `1px solid ${form.vpn_type === 'l2tp' ? '#f59e0b' : '#2a2a2a'}`,
-                    color: form.vpn_type === 'l2tp' ? '#fcd34d' : isLegacyModel ? '#666' : '#333', fontWeight: 600,
-                    opacity: !isLegacyModel ? 0.4 : 1,
-                  }}>
-                  L2TP/IPsec<br />
-                  <span style={{ fontSize: 10, fontWeight: 400 }}>RouterOS v6</span>
-                </button>
+        {/* Step indicator */}
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 28 }}>
+          {STEP_LABELS.map((label, i) => {
+            const n = (i + 1) as 1 | 2 | 3;
+            return (
+              <div key={n} style={{ display: 'flex', alignItems: 'center', flex: i < 2 ? 1 : 'none' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <StepDot n={n} active={step === n} done={step > n} />
+                  <span style={{ fontSize: 9, color: step === n ? '#2563eb' : step > n ? '#555' : '#333', whiteSpace: 'nowrap' }}>{label}</span>
+                </div>
+                {i < 2 && <div style={{ flex: 1, height: 2, background: step > n ? '#2563eb' : '#1e1e1e', margin: '0 6px 16px', transition: 'background 0.3s' }} />}
               </div>
-              {!isLegacyModel && form.model && (
-                <p style={{ fontSize: 11, color: '#555', margin: '4px 0 0' }}>Tier 3–5 hardware runs RouterOS v7+ — WireGuard recommended</p>
-              )}
+            );
+          })}
+        </div>
+
+        {/* ── STEP 1: Form ── */}
+        {step === 1 && (
+          <form onSubmit={generate} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Router Name *</label>
+              <input style={inp} placeholder="e.g. Kireka Main" autoFocus
+                value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </div>
 
             <div>
-              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Site</label>
-              <select style={inp} value={form.site_id} onChange={e => setForm(f => ({ ...f, site_id: e.target.value }))}>
-                <option value="">— No site —</option>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>MikroTik Model</label>
+              <input style={inp} placeholder="e.g. RB4011, L009, hAP ac²"
+                value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
+              <p style={{ fontSize: 11, color: '#444', margin: '4px 0 0' }}>Auto-detects tier → assigns subnet size and capacity</p>
+            </div>
+
+            <div>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 7, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>VPN Protocol</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {([
+                  { key: 'wireguard', label: 'WireGuard',  sub: 'RouterOS v7+', disabled: false         },
+                  { key: 'l2tp',      label: 'L2TP/IPsec', sub: 'RouterOS v6',  disabled: !isLegacyModel },
+                ] as { key: 'wireguard' | 'l2tp'; label: string; sub: string; disabled: boolean }[]).map(({ key, label, sub, disabled }) => (
+                  <button key={key} type="button"
+                    disabled={disabled}
+                    onClick={() => !disabled && setForm(f => ({ ...f, vpn_type: key }))}
+                    style={{
+                      flex: 1, padding: '10px 0', borderRadius: 8, fontSize: 12,
+                      cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 600,
+                      background: form.vpn_type === key ? 'rgba(37,99,235,0.15)' : '#0f0f0f',
+                      border: `1px solid ${form.vpn_type === key ? '#2563eb' : '#2a2a2a'}`,
+                      color: form.vpn_type === key ? '#60a5fa' : disabled ? '#333' : '#666',
+                      opacity: disabled ? 0.5 : 1,
+                    }}>
+                    {label}<br /><span style={{ fontSize: 10, fontWeight: 400 }}>{sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Site</label>
+              <select style={{ ...inp, color: form.site_id ? '#fff' : '#555' }} value={form.site_id}
+                onChange={e => setForm(f => ({ ...f, site_id: e.target.value }))}>
+                <option value="">— No site assigned —</option>
                 {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-            {err && <p style={{ fontSize: 12, color: '#f87171' }}>{err}</p>}
-            <button type="submit" disabled={saving} style={{ background: '#2563eb', border: 'none', color: '#fff', borderRadius: 8, padding: '10px', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Generating…' : 'Generate Setup Script'}
+
+            {err && <p style={{ fontSize: 12, color: '#f87171', margin: 0 }}>{err}</p>}
+
+            <button type="submit" disabled={saving} style={{
+              background: '#2563eb', border: 'none', color: '#fff', borderRadius: 8,
+              padding: '11px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              opacity: saving ? 0.75 : 1, marginTop: 4,
+            }}>
+              {saving ? <><Loader2 size={14} className="animate-spin" /> Generating credentials…</> : <>Generate Setup Script <ChevronRight size={14} /></>}
             </button>
           </form>
-        ) : (
+        )}
+
+        {/* ── STEP 2: Install command + status polling ── */}
+        {step === 2 && ztResult && (
           <div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <button onClick={copy} style={{ display: 'flex', alignItems: 'center', gap: 5, background: copied ? 'rgba(37,99,235,0.15)' : '#1a1a1a', border: `1px solid ${copied ? '#2563eb' : '#2a2a2a'}`, color: copied ? '#2563eb' : '#888', borderRadius: 7, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}>
-                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied!' : 'Copy'}
+            {/* Instruction */}
+            <div style={{ background: 'rgba(37,99,235,0.08)', border: '1px solid rgba(37,99,235,0.2)', borderRadius: 10, padding: '12px 14px', marginBottom: 18 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#60a5fa', margin: '0 0 4px' }}>Paste this ONE command into your MikroTik terminal</p>
+              <p style={{ fontSize: 12, color: '#555', margin: 0 }}>New Terminal → Winbox or SSH. The router configures itself automatically.</p>
+            </div>
+
+            {/* The single command */}
+            <div style={{ background: '#080808', border: '1px solid #1a1a1a', borderRadius: 9, padding: '14px 16px', marginBottom: 12, fontFamily: 'monospace', fontSize: 11, color: '#a3e635', lineHeight: 1.7, wordBreak: 'break-all' }}>
+              {ztResult.install_command}
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+              <button onClick={copyCmd} style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                background: cmdCopied ? 'rgba(37,99,235,0.15)' : '#1e1e1e',
+                border: `1px solid ${cmdCopied ? '#2563eb' : '#2a2a2a'}`,
+                color: cmdCopied ? '#2563eb' : '#aaa', borderRadius: 8,
+                padding: '9px 0', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}>
+                {cmdCopied ? <><Check size={13} /> Copied!</> : <><Copy size={13} /> Copy Command</>}
               </button>
-              <button onClick={download} style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#888', borderRadius: 7, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}>
-                Download .rsc
+              <button onClick={downloadRsc} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: '#1e1e1e', border: '1px solid #2a2a2a', color: '#888',
+                borderRadius: 8, padding: '9px 14px', fontSize: 12, cursor: 'pointer',
+              }}>
+                <Download size={13} /> Download .rsc
               </button>
             </div>
-            <div style={{ background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: 8, padding: '14px 16px', fontFamily: 'monospace', fontSize: 11, color: '#a3e635', lineHeight: 1.65, maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre' }}>
-              {result.script}
+
+            {/* Status polling */}
+            <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 9, padding: '14px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {polling ? (
+                  <>
+                    <Loader2 size={16} color="#f59e0b" className="animate-spin" />
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', margin: 0 }}>Waiting for router to connect…</p>
+                      <p style={{ fontSize: 11, color: '#555', margin: '2px 0 0' }}>Checking every 10 seconds. Router will appear within 60s of running the command.</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 size={16} color="#555" />
+                    <p style={{ fontSize: 13, color: '#555', margin: 0 }}>Run the command above to start the connection check.</p>
+                  </>
+                )}
+              </div>
             </div>
-            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {Object.entries(result.config).map(([k, v]) => (
-                <div key={k} style={{ background: '#111', borderRadius: 7, padding: '8px 12px' }}>
-                  <p style={{ fontSize: 9, color: '#555', margin: '0 0 2px', textTransform: 'uppercase' }}>{k.replace(/_/g, ' ')}</p>
-                  <p style={{ fontSize: 12, color: '#aaa', margin: 0, fontFamily: 'monospace' }}>{String(v)}</p>
+
+            {/* Router config details */}
+            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              {[
+                ['VPN Port',  String(ztResult.config.vpn_port)],
+                ['Tier',      ztResult.config.tier],
+                ['Max Users', String(ztResult.config.max_users)],
+                ['Network',   ztResult.config.network],
+                ['Gateway',   ztResult.config.gateway],
+                ['VPN IP',    ztResult.router.wireguard_peer_ip || '—'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: 7, padding: '8px 10px' }}>
+                  <p style={{ fontSize: 9, color: '#444', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k}</p>
+                  <p style={{ fontSize: 11, color: '#888', margin: 0, fontFamily: 'monospace' }}>{v}</p>
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* ── STEP 3: Connected ── */}
+        {step === 3 && connected && (
+          <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(34,197,94,0.12)', border: '2px solid rgba(34,197,94,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <CheckCircle2 size={32} color="#22c55e" />
+            </div>
+            <p style={{ fontSize: 17, fontWeight: 700, color: '#fff', margin: '0 0 4px' }}>
+              {connected.name} is online!
+            </p>
+            <p style={{ fontSize: 12, color: '#555', margin: '0 0 22px' }}>Router registered and VPN tunnel established.</p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, textAlign: 'left', marginBottom: 22 }}>
+              {[
+                ['Model',   connected.model_name || form.model || 'MikroTik'],
+                ['Tier',    connected.tier_name  || '—'],
+                ['VPN',     connected.vpn_address || '—'],
+                ['Subnet',  connected.network_address ? `${connected.network_address}/${connected.subnet_prefix}` : '—'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: 8, padding: '10px 14px' }}>
+                  <p style={{ fontSize: 9, color: '#555', margin: '0 0 3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k}</p>
+                  <p style={{ fontSize: 12, color: '#aaa', margin: 0, fontFamily: 'monospace' }}>{v}</p>
+                </div>
+              ))}
+            </div>
+
+            <a href={`/admin/router/${connected.id}`} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              background: '#2563eb', color: '#fff', borderRadius: 8, padding: '11px 0',
+              fontSize: 13, fontWeight: 700, textDecoration: 'none', marginBottom: 8,
+            }}>
+              View Router Analytics <ChevronRight size={14} />
+            </a>
+            <button onClick={onClose} style={{
+              width: '100%', background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#888',
+              borderRadius: 8, padding: '10px 0', fontSize: 12, cursor: 'pointer',
+            }}>Close</button>
           </div>
         )}
       </div>

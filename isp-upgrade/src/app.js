@@ -41,7 +41,10 @@ app.use('/api/auth', require('./auth/auth.routes'));
 // ── Superadmin routes (no tenant middleware) ──────────────────────────────────
 app.use('/api/superadmin', require('./superadmin/superadmin.routes'));
 
-// ── Router heartbeat — public, no tenant auth (called from MikroTik) ─────────
+// ── ZTP routes — public, bearer-token auth (script delivery, register, heartbeat)
+app.use('/api/v1/router', require('./ztp/ztp.routes'));
+
+// ── Router heartbeat (legacy vpn_username path) ───────────────────────────────
 const { handleHeartbeat } = require('./vpn/vpn.service');
 app.post('/api/v1/routers/heartbeat', async (req, res) => {
   try {

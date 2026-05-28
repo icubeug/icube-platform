@@ -116,4 +116,32 @@ router.delete('/routers/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/v1/settings/api-credentials
+router.get('/api-credentials', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  try {
+    const [t] = await db.query(`SELECT slug, api_token FROM tenants WHERE id = $1`, [tid]);
+    const tok = t?.api_token || null;
+    res.json({
+      tenant_slug:        t?.slug || '',
+      api_token_prefix:   tok ? tok.slice(0, 12) + '…' : null,
+      api_token_full:     tok,
+      has_token:          !!tok,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/v1/settings/api-credentials/regenerate
+router.post('/api-credentials/regenerate', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  const crypto = require('crypto');
+  const newToken = 'icube_' + crypto.randomBytes(32).toString('hex');
+  try {
+    await db.query(`UPDATE tenants SET api_token = $1 WHERE id = $2`, [newToken, tid]);
+    res.json({ api_token: newToken });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
