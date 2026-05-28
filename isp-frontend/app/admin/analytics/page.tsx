@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { api, AnalyticsUsage } from '@/lib/api';
+import { api, apiCall, AnalyticsUsage } from '@/lib/api';
 import {
   BarChart2, Database, Users, Clock, Activity,
   TrendingUp, TrendingDown, Minus,
@@ -126,18 +126,40 @@ function EmptyChart({ height = 200 }: { height?: number }) {
 export default function AnalyticsPage() {
   const [data,       setData]       = useState<AnalyticsUsage | null>(null);
   const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState('');
   const [range,      setRange]      = useState<Range>('30d');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo,   setCustomTo]   = useState('');
 
+  const EMPTY: AnalyticsUsage = {
+    total_data_gb: 0, unique_users: 0, avg_session_minutes: 0, total_sessions: 0,
+    prev_total_data_gb: 0, prev_unique_users: 0, prev_avg_session_minutes: 0, prev_total_sessions: 0,
+    daily_usage: [], termination_reasons: [], top_users: [], package_usage: [], recent_sessions: [],
+  };
+
   const load = useCallback(async () => {
-    setLoading(true); setError('');
+    setLoading(true);
     const [from, to] = buildDates(range, customFrom, customTo);
     try {
-      setData(await api.analytics.usage(from, to));
-    } catch (e: any) { setError(e.message); }
-    finally { setLoading(false); }
+      const res = await apiCall(`/analytics/usage?from=${from}&to=${to}`);
+      if (!res.ok) {
+        console.error('[Analytics] API responded with', res.status);
+        setData(EMPTY);
+        return;
+      }
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        console.error('[Analytics] Non-JSON response (content-type:', ct, ')');
+        setData(EMPTY);
+        return;
+      }
+      setData(await res.json());
+    } catch (e: any) {
+      console.error('[Analytics] fetch error:', e.message);
+      setData(EMPTY);
+    } finally {
+      setLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, customFrom, customTo]);
 
   useEffect(() => { load(); }, [load]);
@@ -192,11 +214,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {error && (
-        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 9, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#f87171' }}>
-          {error}
-        </div>
-      )}
+      {/* Errors are caught and handled silently — empty state is shown instead */}
 
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300 }}>
