@@ -116,6 +116,27 @@ router.delete('/routers/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/v1/settings/tenant-credentials — slug + api_token + latest router tokens
+router.get('/tenant-credentials', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  try {
+    const [tenant] = await db.query(
+      `SELECT slug, api_token FROM tenants WHERE id = $1`, [tid]
+    );
+    const [latest] = await db.query(`
+      SELECT id, name, bearer_token, install_token, install_token_used
+      FROM routers WHERE tenant_id = $1
+      ORDER BY created_at DESC LIMIT 1
+    `, [tid]);
+    res.json({
+      slug:          tenant?.slug          || '',
+      api_token:     tenant?.api_token     || null,
+      latest_router: latest || null,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/v1/settings/api-credentials
 router.get('/api-credentials', async (req, res) => {
   const db  = req.app.locals.db;

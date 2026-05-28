@@ -70,6 +70,17 @@ export interface ApiCredentials {
   api_token_full: string | null;
   has_token: boolean;
 }
+
+export interface TenantCredentials {
+  slug: string;
+  api_token: string | null;
+  latest_router: {
+    id: string; name: string;
+    bearer_token: string | null;
+    install_token: string | null;
+    install_token_used: boolean;
+  } | null;
+}
 export interface Voucher {
   id: string; code: string; status: 'unused' | 'active' | 'expired' | 'used';
   package_name: string | null; site_name: string | null; expires_at: string | null;
@@ -387,8 +398,9 @@ export const api = {
   },
 
   settings: {
-    getApiCredentials:   () => req<ApiCredentials>('/settings/api-credentials'),
-    regenerateApiToken:  () => req<{ api_token: string }>('/settings/api-credentials/regenerate', { method: 'POST' }),
+    getTenantCredentials: () => req<TenantCredentials>('/settings/tenant-credentials'),
+    getApiCredentials:    () => req<ApiCredentials>('/settings/api-credentials'),
+    regenerateApiToken:   () => req<{ api_token: string }>('/settings/api-credentials/regenerate', { method: 'POST' }),
     getGeneral: () => req<HotspotSettings>('/settings/general'),
     putGeneral: (data: Partial<HotspotSettings>) =>
       req<HotspotSettings>('/settings/general', { method: 'PUT', body: JSON.stringify(data) }),

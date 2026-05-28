@@ -12,7 +12,42 @@ function extractBearer(req) {
   return null;
 }
 
+// ── Shared script lookup helper ───────────────────────────────────────────────
+async function lookupRouter(db, tenant_slug, install_token, bearer) {
+  const rows = await db.query(`
+    SELECT r.*, t.slug AS tenant_slug, t.name AS tenant_name
+    FROM routers r JOIN tenants t ON t.id = r.tenant_id
+    WHERE r.install_token = $1 AND t.slug = $2
+  `, [install_token, tenant_slug]);
+  if (!rows.length) return { err: 404, msg: '# Error: Router not found or invalid token.\n' };
+  const r = rows[0];
+  if (bearer && r.bearer_token !== bearer) return { err: 403, msg: '# Error: Invalid bearer token.\n' };
+  return { r };
+}
+
 // ── Script delivery ────────────────────────────────────────────────────────────
+// GET /api/v1/router/:tenant_slug/scripts/radius/:install_token
+router.get('/:tenant_slug/scripts/radius/:install_token', async (req, res) => {
+  const { tenant_slug, install_token } = req.params;
+  const bearer = extractBearer(req);
+  const { r, err, msg } = await lookupRouter(req.app.locals.db, tenant_slug, install_token, bearer);
+  if (err) return res.status(err).type('text/plain').send(msg);
+  res.type('text/plain')
+     .setHeader('Content-Disposition', `attachment; filename="icube-radius-${r.name.replace(/\s+/g, '-')}.rsc"`)
+     .send(buildRadiusScript(r));
+});
+
+// GET /api/v1/router/:tenant_slug/scripts/vpn/:install_token
+router.get('/:tenant_slug/scripts/vpn/:install_token', async (req, res) => {
+  const { tenant_slug, install_token } = req.params;
+  const bearer = extractBearer(req);
+  const { r, err, msg } = await lookupRouter(req.app.locals.db, tenant_slug, install_token, bearer);
+  if (err) return res.status(err).type('text/plain').send(msg);
+  res.type('text/plain')
+     .setHeader('Content-Disposition', `attachment; filename="icube-vpn-${r.name.replace(/\s+/g, '-')}.rsc"`)
+     .send(buildVPNScript(r));
+});
+
 // GET /api/v1/router/:tenant_slug/scripts/full/:install_token
 router.get('/:tenant_slug/scripts/full/:install_token', async (req, res) => {
   const db = req.app.locals.db;
@@ -20,26 +55,11 @@ router.get('/:tenant_slug/scripts/full/:install_token', async (req, res) => {
   const bearer = extractBearer(req);
 
   try {
-    const rows = await db.query(`
-      SELECT r.*, t.slug AS tenant_slug, t.name AS tenant_name
-      FROM routers r
-      JOIN tenants t ON t.id = r.tenant_id
-      WHERE r.install_token = $1 AND t.slug = $2
-    `, [install_token, tenant_slug]);
-
-    if (!rows.length) {
-      return res.status(404).type('text/plain').send('# Error: Router not found or invalid token.\n');
-    }
-    const r = rows[0];
-
-    if (bearer && r.bearer_token !== bearer) {
-      return res.status(403).type('text/plain').send('# Error: Invalid bearer token.\n');
-    }
-
-    const script = buildZTPScript(r);
+    const { r, err: lookupErr, msg } = await lookupRouter(db, tenant_slug, install_token, bearer);
+    if (lookupErr) return res.status(lookupErr).type('text/plain').send(msg);
     res.type('text/plain')
        .setHeader('Content-Disposition', `attachment; filename="icube-setup-${r.name.replace(/\s+/g, '-')}.rsc"`)
-       .send(script);
+       .send(buildZTPScript(r));
   } catch (err) {
     console.error('[ZTP] script error:', err.message);
     res.status(500).type('text/plain').send(`# Error: ${err.message}\n`);
@@ -343,6 +363,90 @@ function buildZTPScript(r) {
 # Tenant: ${tenantName} | Router: ${r.name}
 # Support: support@icubeug.net
 # ============================================
+`;
+}
+
+// ── Partial: RADIUS only ──────────────────────────────────────────────────────
+function buildRadiusScript(r) {
+  const bearer = r.bearer_token;
+  const now    = new Date().toISOString();
+  return `# ============================================
+# iCube RADIUS Configuration
+# Router: ${r.name}  Generated: ${now}
+# ============================================
+
+/radius add \\
+  service=hotspot,login \\
+  address=${SERVER_IP} \\
+  secret="${r.radius_secret}" \\
+  authentication-port=1812 \\
+  accounting-port=1813 \\
+  timeout=3000 \\
+  comment="iCube RADIUS"
+
+/radius incoming add accept=yes port=3799
+
+/ip hotspot walled-garden add dst-host=${SERVER_IP}
+/ip hotspot walled-garden ip add dst-address=${SERVER_IP}/32 action=accept
+
+:local identity [/system identity get name]
+/tool fetch \\
+  url="https://${SERVER_IP}/api/v1/router/register" \\
+  http-method=post \\
+  http-header-field="Authorization: Bearer ${bearer}\\r\\nContent-Type: application/json" \\
+  http-data="{\\"identity\\":\\"$identity\\"}" \\
+  output=none
+
+:log info "iCube RADIUS configured for ${r.name}"
+`;
+}
+
+// ── Partial: VPN only ─────────────────────────────────────────────────────────
+function buildVPNScript(r) {
+  const vpnPort      = r.vpn_port      || 51820;
+  const privateKey   = r.wireguard_private_key || '[PRIVATE_KEY_MISSING]';
+  const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
+  const peerIp       = r.wireguard_peer_ip || '10.99.0.2';
+  const bearer       = r.bearer_token;
+  const now          = new Date().toISOString();
+  return `# ============================================
+# iCube WireGuard VPN Configuration
+# Router: ${r.name}  Port: ${vpnPort}  Generated: ${now}
+# ============================================
+
+/interface wireguard add name=icube-vpn \\
+  private-key="${privateKey}" \\
+  listen-port=13231 \\
+  comment="iCube VPN v2"
+
+/interface wireguard peers add \\
+  interface=icube-vpn \\
+  public-key="${serverPubKey}" \\
+  endpoint-address=vpn.icubeug.net \\
+  endpoint-port=${vpnPort} \\
+  allowed-address=10.99.0.0/24,${SERVER_IP}/32 \\
+  persistent-keepalive=25
+
+/ip address add \\
+  address=${peerIp}/24 \\
+  interface=icube-vpn \\
+  comment="iCube VPN IP"
+
+/ip route add \\
+  dst-address=${SERVER_IP}/32 \\
+  gateway=${peerIp} \\
+  distance=1 \\
+  comment="iCube Server"
+
+:local identity [/system identity get name]
+/tool fetch \\
+  url="https://${SERVER_IP}/api/v1/router/register" \\
+  http-method=post \\
+  http-header-field="Authorization: Bearer ${bearer}\\r\\nContent-Type: application/json" \\
+  http-data="{\\"identity\\":\\"$identity\\"}" \\
+  output=none
+
+:log info "iCube VPN configured for ${r.name} — ${peerIp}"
 `;
 }
 
