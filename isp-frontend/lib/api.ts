@@ -71,6 +71,22 @@ export interface ApiCredentials {
   has_token: boolean;
 }
 
+export interface AnalyticsUsage {
+  total_data_gb: number; unique_users: number;
+  avg_session_minutes: number; total_sessions: number;
+  prev_total_data_gb: number; prev_unique_users: number;
+  prev_avg_session_minutes: number; prev_total_sessions: number;
+  daily_usage:          { date: string; gb: number }[];
+  termination_reasons:  { reason: string; count: number; pct: number }[];
+  top_users:            { username: string; data_gb: number; sessions: number; last_seen: string }[];
+  package_usage:        { package_name: string; data_gb: number }[];
+  recent_sessions:      {
+    username: string; mac_address: string; ip_address: string;
+    duration_seconds: number; data_mb: number; package_name: string;
+    started: string; ended: string | null; status: string; terminate_cause: string;
+  }[];
+}
+
 export interface RouterRequest {
   id: string; tenant_id: string; tenant_name: string; tenant_email: string;
   router_name: string; router_model: string | null; site_name: string | null;
@@ -402,6 +418,15 @@ export const api = {
       req<Paginated<PlatformTransaction>>(`/billing/transactions${qs(params ?? {})}`),
     payments:     (params?: { page?: number; per_page?: number; status?: string }) =>
       req<Paginated<BillingInvoice> & { account_credit: number }>(`/billing/payments${qs(params ?? {})}`),
+  },
+
+  analytics: {
+    usage: (from?: string, to?: string) => {
+      const q = new URLSearchParams();
+      if (from) q.set('from', from);
+      if (to)   q.set('to', to);
+      return req<AnalyticsUsage>(`/analytics/usage?${q}`);
+    },
   },
 
   routerRequests: {

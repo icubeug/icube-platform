@@ -76,6 +76,7 @@ app.use('/api/v1/billing',      require('./billing/billing.routes'));
 app.use('/api/v1/settings',     require('./settings/settings.routes'));
 app.use('/api/v1/features',     require('./features/features.routes'));
 app.use('/api/v1/users',        require('./users/users.routes'));
+app.use('/api/v1/analytics',      require('./analytics/analytics.routes'));
 app.use('/api/v1/sales',          require('./sales/sales.routes'));
 app.use('/api/v1/router-requests', require('./router-requests/requests.routes'));
 app.use('/api/v1/packages',     require('./packages/packages.routes'));
