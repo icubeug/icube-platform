@@ -43,3 +43,6 @@ config/wireguard/*.conf
 
 # Coverage
 coverage/
+
+# macOS
+.DS_Store
