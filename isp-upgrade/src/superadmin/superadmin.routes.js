@@ -452,12 +452,17 @@ router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (
   const db     = req.app.locals.db;
   const tid    = req.params.tenant_id;
   const crypto = require('crypto');
-  const { name, model, site_id, vpn_type = 'wireguard' } = req.body;
+  const { name, site_id, vpn_type = 'wireguard' } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
   try {
     const { detectRouterTier, generateZeroTouchScript } = require('../routers/router-intelligence');
-    const tier         = detectRouterTier(model);
+    if (site_id) {
+      const siteRows = await db.query(`SELECT id FROM sites WHERE id = $1 AND tenant_id = $2`, [site_id, tid]);
+      if (!siteRows.length) return res.status(404).json({ error: 'Site not found' });
+    }
+
+    const tier         = detectRouterTier(null);
     const radiusSecret = 'rs-' + crypto.randomBytes(16).toString('hex');
     const bearerToken  = 'icube_' + crypto.randomBytes(32).toString('hex');
     const installToken = crypto.randomBytes(32).toString('hex');
@@ -496,14 +501,14 @@ router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (
         privateKey, publicKey, peerIp, peerIdx,
         tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
         tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users,
-        tier.tier_name, model||null, bearerToken, installToken, apiUsername, apiPassword]);
+        tier.tier_name, null, bearerToken, installToken, apiUsername, apiPassword]);
 
     const newRouter = row;
     const [tenant]  = await db.query(`SELECT slug, name FROM tenants WHERE id = $1`, [tid]);
     const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
 
     const script = generateZeroTouchScript({
-      routerName: name, routerToken: newRouter.router_token || bearerToken, model: model||'Unknown',
+      routerName: name, routerToken: newRouter.router_token || bearerToken, model: 'Auto-detect on first boot',
       vpnPort, privateKey, serverPublicKey: serverPubKey, peerIp, radiusSecret,
       tier, tenantSlug: tenant?.slug||'default', vpnType: vpn_type,
       vpnUsername: '', vpnPassword: '', ipsecSecret: process.env.VPN_IPSEC_SECRET||'icube-ipsec-2024',

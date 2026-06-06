@@ -5,6 +5,7 @@ const jwt      = require('jsonwebtoken');
 const router   = express.Router();
 const { normalizePhone } = require('../utils/phone');
 const { sendOTPEmail }   = require('../notifications/email.service');
+const { createDefaultSiteAndRouter } = require('../routers/onboarding.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret';
 
@@ -126,6 +127,8 @@ router.post('/register', async (req, res) => {
       RETURNING id, email, name, role
     `, [tenant.id, email, hash, owner_name || business_name, normalizedPhone]);
 
+    const onboarding = await createDefaultSiteAndRouter(db, tenant);
+
     // ── 4. Issue JWT ──────────────────────────────────────────────────────────
     const jwtToken = jwt.sign(
       { admin_id: admin.id, tenant_id: tenant.id, role: admin.role },
@@ -133,7 +136,7 @@ router.post('/register', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    res.status(201).json({ token: jwtToken, admin, tenant });
+    res.status(201).json({ token: jwtToken, admin, tenant, onboarding });
   } catch (err) {
     console.error('[Auth] register error:', err.message);
     res.status(500).json({ error: err.message });

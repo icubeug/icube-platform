@@ -44,19 +44,20 @@ async function processSale(db, redis, {
 }) {
   // 1. Load package
   const pkgRows = await db.query(
-    `SELECT * FROM packages WHERE id = $1 AND active = true`,
-    [package_id]
+    `SELECT * FROM packages WHERE id = $1 AND tenant_id = $2 AND active = true`,
+    [package_id, tenant_id]
   );
   if (!pkgRows.length) throw new Error('Package not found or inactive');
   const pkg = pkgRows[0];
 
   // 2. Load agent & validate commission
   const agentRows = await db.query(
-    `SELECT * FROM agents WHERE id = $1 AND status = 'active'`,
-    [agent_id]
+    `SELECT * FROM agents WHERE id = $1 AND tenant_id = $2 AND status = 'active'`,
+    [agent_id, tenant_id]
   );
   if (!agentRows.length) throw new Error('Agent not found');
   const agent = agentRows[0];
+  if (String(agent.site_id) !== String(site_id)) throw new Error('Agent is not assigned to this site');
 
   const amount = Number(pkg.price_ugx);
   const commission = parseFloat((amount * agent.commission_pct / 100).toFixed(0));

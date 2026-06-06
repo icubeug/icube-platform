@@ -10,11 +10,12 @@ router.get('/', async (req, res) => {
     const rows = await req.app.locals.db.query(`
       SELECT p.*, v.code AS voucher_code, s.name AS site_name
       FROM payments p
-      LEFT JOIN vouchers v ON v.id = p.voucher_id
-      LEFT JOIN sites s ON s.id = p.site_id
+      LEFT JOIN vouchers v ON v.id = p.voucher_id AND v.tenant_id = p.tenant_id
+      LEFT JOIN sites s ON s.id = p.site_id AND s.tenant_id = p.tenant_id
+      WHERE p.tenant_id = $1
       ORDER BY p.created_at DESC
-      LIMIT $1 OFFSET $2
-    `, [limit, offset]);
+      LIMIT $2 OFFSET $3
+    `, [req.tenant_id, limit, offset]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -25,7 +26,8 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const rows = await req.app.locals.db.query(
-      'SELECT * FROM payments WHERE id = $1', [req.params.id]
+      'SELECT * FROM payments WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, req.tenant_id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Payment not found' });
     res.json(rows[0]);

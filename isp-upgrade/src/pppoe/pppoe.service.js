@@ -19,10 +19,17 @@ async function createSubscriber(db, redis, {
 
   // Validate plan
   const planRows = await db.query(
-    `SELECT * FROM pppoe_plans WHERE id = $1 AND active = true`, [plan_id]
+    `SELECT * FROM pppoe_plans WHERE id = $1 AND tenant_id = $2 AND active = true`,
+    [plan_id, tenant_id]
   );
   if (!planRows.length) throw new Error('Plan not found');
   const plan = planRows[0];
+
+  const siteRows = await db.query(`SELECT id FROM sites WHERE id = $1 AND tenant_id = $2`, [site_id, tenant_id]);
+  if (!siteRows.length) throw new Error('Site not found');
+
+  const routerRows = await db.query(`SELECT id FROM routers WHERE id = $1 AND tenant_id = $2`, [router_id, tenant_id]);
+  if (!routerRows.length) throw new Error('Router not found');
 
   // Hash password for DB storage (push plaintext to RADIUS separately)
   const password_hash = await bcrypt.hash(password, 10);
@@ -70,7 +77,8 @@ async function createSubscriber(db, redis, {
 // ── Generate invoice ──────────────────────────────────────────────────────────
 async function generateInvoice(db, subscriber_id, plan) {
   const subRows = await db.query(
-    `SELECT * FROM pppoe_subscribers WHERE id = $1`, [subscriber_id]
+    `SELECT s.*, p.tenant_id FROM pppoe_subscribers s JOIN pppoe_plans p ON p.id = s.plan_id WHERE s.id = $1`,
+    [subscriber_id]
   );
   const sub = subRows[0];
   const due_date = sub.next_billing_date;

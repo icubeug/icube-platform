@@ -13,11 +13,16 @@ router.post('/zero-touch', async (req, res) => {
   const db  = req.app.locals.db;
   const tid = req.tenant_id;
 
-  const { name, model, site_id, vpn_type = 'wireguard' } = req.body;
+  const { name, site_id, vpn_type = 'wireguard' } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
   try {
-    const tier          = detectRouterTier(model);
+    if (site_id) {
+      const siteRows = await db.query(`SELECT id FROM sites WHERE id = $1 AND tenant_id = $2`, [site_id, tid]);
+      if (!siteRows.length) return res.status(404).json({ error: 'Site not found' });
+    }
+
+    const tier          = detectRouterTier(null);
     const radiusSecret  = 'rs-' + crypto.randomBytes(16).toString('hex');
     const bearerToken   = 'icube_' + crypto.randomBytes(32).toString('hex');
     const installToken  = crypto.randomBytes(32).toString('hex');
@@ -75,7 +80,7 @@ router.post('/zero-touch', async (req, res) => {
       peerIp, peerIdx,
       tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
       tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users, tier.tier_name,
-      model || null, bearerToken, installToken,
+      null, bearerToken, installToken,
       apiUsername, apiPassword,
     ]);
 
@@ -89,7 +94,7 @@ router.post('/zero-touch', async (req, res) => {
     const script = generateZeroTouchScript({
       routerName:    name,
       routerToken:   newRouter.router_token || bearerToken,
-      model:         model || 'Unknown',
+      model:         'Auto-detect on first boot',
       vpnPort,
       privateKey,
       serverPublicKey: serverPubKey,
@@ -126,6 +131,7 @@ router.post('/zero-touch', async (req, res) => {
         network: tier.network,
         gateway: tier.gateway,
         max_users: tier.max_users,
+        model_detection: 'automatic_on_router_registration',
       },
     });
   } catch (err) {
@@ -204,9 +210,9 @@ router.get('/', async (req, res) => {
       SELECT r.*, s.name AS site_name
       FROM routers r
       LEFT JOIN sites s ON s.id = r.site_id
-      WHERE r.tenant_id = $1 OR $1 IS NULL
+      WHERE r.tenant_id = $1
       ORDER BY r.created_at DESC
-    `, [tid || null]);
+    `, [tid]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -217,7 +223,8 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const rows = await req.app.locals.db.query(
-      'SELECT * FROM routers WHERE id = $1', [req.params.id]
+      'SELECT * FROM routers WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, req.tenant_id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Router not found' });
     res.json(rows[0]);
@@ -274,7 +281,10 @@ router.get('/:id/metrics', async (req, res) => {
   const intervalMap = { '1h': '1 hour', '3h': '3 hours', '6h': '6 hours', '24h': '24 hours' };
   const interval = intervalMap[range] || '1 hour';
   try {
-    const router = await db.query(`SELECT * FROM routers WHERE id = $1`, [req.params.id]);
+    const router = await db.query(
+      `SELECT * FROM routers WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, req.tenant_id]
+    );
     if (!router.length) return res.status(404).json({ error: 'Router not found' });
 
     const metrics = await db.query(`
@@ -398,7 +408,7 @@ router.post('/:id/setup', async (req, res) => {
     if (tid) {
       rRows = await db.query(`SELECT * FROM routers WHERE id=$1 AND tenant_id=$2`, [req.params.id, tid]);
     } else {
-      rRows = await db.query(`SELECT * FROM routers WHERE id=$1`, [req.params.id]);
+      return res.status(401).json({ error: 'Tenant required' });
     }
     const r = rRows[0];
     if (!r) return res.status(404).json({ error: 'Router not found' });
@@ -584,8 +594,8 @@ router.get('/:id/analytics', async (req, res) => {
   const tid = req.tenant?.id;
   try {
     const [r] = await db.query(
-      `SELECT * FROM routers WHERE id = $1 AND (tenant_id = $2 OR $2 IS NULL)`,
-      [req.params.id, tid || null]
+      `SELECT * FROM routers WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, tid]
     );
     if (!r) return res.status(404).json({ error: 'Router not found' });
 

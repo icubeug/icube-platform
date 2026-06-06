@@ -10,11 +10,12 @@ router.get('/', async (req, res) => {
         COUNT(DISTINCT r.id) AS router_count,
         COUNT(DISTINCT v.id) FILTER (WHERE v.status = 'active') AS active_vouchers
       FROM sites s
-      LEFT JOIN routers r ON r.site_id = s.id
-      LEFT JOIN vouchers v ON v.site_id = s.id
+      LEFT JOIN routers r ON r.site_id = s.id AND r.tenant_id = s.tenant_id
+      LEFT JOIN vouchers v ON v.site_id = s.id AND v.tenant_id = s.tenant_id
+      WHERE s.tenant_id = $1
       GROUP BY s.id
       ORDER BY s.created_at DESC
-    `);
+    `, [req.tenant_id]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -69,7 +70,10 @@ router.post('/', async (req, res) => {
 // GET /api/v1/sites/:id
 router.get('/:id', async (req, res) => {
   try {
-    const rows = await req.app.locals.db.query('SELECT * FROM sites WHERE id = $1', [req.params.id]);
+    const rows = await req.app.locals.db.query(
+      'SELECT * FROM sites WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, req.tenant_id]
+    );
     if (!rows.length) return res.status(404).json({ error: 'Site not found' });
     res.json(rows[0]);
   } catch (err) {
@@ -86,9 +90,9 @@ router.patch('/:id', async (req, res) => {
         name     = COALESCE($1, name),
         location = COALESCE($2, location),
         status   = COALESCE($3, status)
-      WHERE id = $4
+      WHERE id = $4 AND tenant_id = $5
       RETURNING *
-    `, [name, location, status, req.params.id]);
+    `, [name, location, status, req.params.id, req.tenant_id]);
     if (!rows.length) return res.status(404).json({ error: 'Site not found' });
     res.json(rows[0]);
   } catch (err) {

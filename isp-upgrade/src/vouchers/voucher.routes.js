@@ -66,9 +66,17 @@ router.post('/generate', async (req, res) => {
 
   try {
     const pkg = await req.app.locals.db.query(
-      'SELECT * FROM packages WHERE id = $1 AND active = true', [package_id]
+      'SELECT * FROM packages WHERE id = $1 AND tenant_id = $2 AND active = true',
+      [package_id, req.tenant_id]
     );
     if (!pkg.length) return res.status(404).json({ error: 'Package not found' });
+    if (site_id) {
+      const site = await req.app.locals.db.query(
+        'SELECT id FROM sites WHERE id = $1 AND tenant_id = $2',
+        [site_id, req.tenant_id]
+      );
+      if (!site.length) return res.status(404).json({ error: 'Site not found' });
+    }
 
     const generated = [];
     for (let i = 0; i < qty; i++) {
@@ -96,7 +104,8 @@ router.post('/redeem', async (req, res) => {
     const rows = await req.app.locals.db.query(
       `SELECT v.*, p.duration_hrs, p.name AS package_name
        FROM vouchers v JOIN packages p ON p.id = v.package_id
-       WHERE UPPER(v.code) = UPPER($1)`, [code]
+       WHERE UPPER(v.code) = UPPER($1) AND v.tenant_id = $2`,
+      [code, req.tenant_id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Voucher not found' });
     const v = rows[0];
@@ -104,8 +113,8 @@ router.post('/redeem', async (req, res) => {
 
     const expires = new Date(Date.now() + v.duration_hrs * 3600 * 1000);
     await req.app.locals.db.query(`
-      UPDATE vouchers SET status='active', activated_at=NOW(), expires_at=$1 WHERE id=$2
-    `, [expires, v.id]);
+      UPDATE vouchers SET status='active', activated_at=NOW(), expires_at=$1 WHERE id=$2 AND tenant_id=$3
+    `, [expires, v.id, req.tenant_id]);
 
     res.json({ message: 'Voucher activated', expires_at: expires, package: v.package_name });
   } catch (err) {

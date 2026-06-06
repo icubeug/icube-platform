@@ -15,8 +15,8 @@ const { v4: uuidv4 } = require('uuid');
 async function handleTerminalSession(ws, db, redis, { router_id, admin_id, tenant_id }) {
   // 1. Load router credentials
   const routerRows = await db.query(
-    `SELECT * FROM routers WHERE id = $1`,
-    [router_id]
+    `SELECT * FROM routers WHERE id = $1 AND tenant_id = $2`,
+    [router_id, tenant_id]
   );
   if (!routerRows.length) {
     ws.send(JSON.stringify({ type: 'error', message: 'Router not found' }));

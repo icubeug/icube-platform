@@ -6,13 +6,31 @@
 async function resolveTenant(req, res, next) {
   const db = req.app.locals.db;
   const redis = req.app.locals.redis;
+  const jwt = require('jsonwebtoken');
 
   // 1. Determine tenant identifier
-  //    Priority: X-Tenant-ID header (API clients) > subdomain > custom domain
+  //    Authenticated requests are scoped by JWT. X-Tenant-ID may only match it.
   let tenant = null;
+  let tokenTenantId = null;
+  const headerTenantId = req.headers['x-tenant-id'];
+  const auth = req.headers.authorization;
 
-  if (req.headers['x-tenant-id']) {
-    tenant = await getTenantById(db, redis, req.headers['x-tenant-id']);
+  if (auth?.startsWith('Bearer ')) {
+    try {
+      const payload = jwt.verify(auth.split(' ')[1], process.env.JWT_SECRET || 'dev-jwt-secret');
+      tokenTenantId = payload.tenant_id || null;
+    } catch {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+
+  if (tokenTenantId) {
+    if (headerTenantId && headerTenantId !== tokenTenantId) {
+      return res.status(403).json({ error: 'Tenant mismatch' });
+    }
+    tenant = await getTenantById(db, redis, tokenTenantId);
+  } else if (headerTenantId) {
+    tenant = await getTenantById(db, redis, headerTenantId);
   } else {
     const host = req.hostname; // e.g. "acme.yourplatform.com" or "isp.acme.co.ug"
     const subdomain = host.split('.')[0];

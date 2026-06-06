@@ -226,6 +226,26 @@ function buildZTPScript(r) {
 # Check RouterOS version
 :local rosver [/system resource get version]
 :log info "iCube ZTP Starting - RouterOS $rosver"
+:local board [/system resource get board-name]
+:local icubeNetwork "${network}"
+:local icubePrefix "${prefix}"
+:local icubeGateway "${gateway}"
+:local icubePoolStart "${poolStart}"
+:local icubePoolEnd "${poolEnd}"
+:local icubeTier "SOHO"
+:if (([:find $board "RB3011"] != nil) or ([:find $board "RB4011"] != nil) or ([:find $board "L009"] != nil) or ([:find $board "RB1100"] != nil) or ([:find $board "CCR1009"] != nil)) do={
+  :set icubeNetwork "10.10.0.0"; :set icubePrefix "21"; :set icubeGateway "10.10.0.1"; :set icubePoolStart "10.10.0.2"; :set icubePoolEnd "10.10.7.254"; :set icubeTier "Large"
+}
+:if (([:find $board "CCR1016"] != nil) or ([:find $board "CCR1036"] != nil) or ([:find $board "CCR1072"] != nil) or ([:find $board "CCR2004"] != nil) or ([:find $board "CCR2116"] != nil)) do={
+  :set icubeNetwork "10.10.0.0"; :set icubePrefix "19"; :set icubeGateway "10.10.0.1"; :set icubePoolStart "10.10.0.2"; :set icubePoolEnd "10.10.31.254"; :set icubeTier "Enterprise"
+}
+:if ([:find $board "CCR2216"] != nil) do={
+  :set icubeNetwork "10.10.0.0"; :set icubePrefix "18"; :set icubeGateway "10.10.0.1"; :set icubePoolStart "10.10.0.2"; :set icubePoolEnd "10.10.63.254"; :set icubeTier "Carrier"
+}
+:if (([:find $board "hAP ac"] != nil) or ([:find $board "RB962"] != nil) or ([:find $board "RBD53"] != nil) or ([:find $board "RB2011"] != nil) or ([:find $board "RB951G"] != nil)) do={
+  :set icubeNetwork "10.10.0.0"; :set icubePrefix "23"; :set icubeGateway "10.10.0.1"; :set icubePoolStart "10.10.0.2"; :set icubePoolEnd "10.10.1.254"; :set icubeTier "Medium"
+}
+:log info ("iCube detected board " . $board . " tier " . $icubeTier)
 
 # Set identity
 /system identity set name="${r.name}"
@@ -262,7 +282,7 @@ function buildZTPScript(r) {
 # ============================================
 # DHCP & NETWORK
 # ============================================
-/ip pool add name=icube-pool ranges=${poolStart}-${poolEnd}
+/ip pool add name=icube-pool ranges=($icubePoolStart . "-" . $icubePoolEnd)
 
 /ip dhcp-server add \\
   name=icube-dhcp \\
@@ -272,12 +292,12 @@ function buildZTPScript(r) {
   disabled=no
 
 /ip dhcp-server network add \\
-  address=${network}/${prefix} \\
-  gateway=${gateway} \\
+  address=($icubeNetwork . "/" . $icubePrefix) \\
+  gateway=$icubeGateway \\
   dns-server=8.8.8.8,8.8.4.4
 
 /ip address add \\
-  address=${gateway}/${prefix} \\
+  address=($icubeGateway . "/" . $icubePrefix) \\
   interface=bridge \\
   comment="iCube LAN"
 
@@ -308,7 +328,7 @@ function buildZTPScript(r) {
 # ============================================
 /ip hotspot profile add \\
   name=icube-profile \\
-  hotspot-address=${gateway} \\
+  hotspot-address=$icubeGateway \\
   use-radius=yes \\
   radius-accounting=yes \\
   login-by=http-chap,http-pap,mac-cookie \\

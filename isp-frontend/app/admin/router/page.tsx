@@ -245,8 +245,8 @@ function ZeroTouchModal({ sites, onClose, onDone }: { sites: Site[]; onClose: ()
     setSaving(true); setErr('');
     try {
       const res = await api.routers.zeroTouch({
-        name: form.name.trim(), model: form.model || undefined,
-        site_id: form.site_id || undefined, vpn_type: form.vpn_type,
+        name: form.name.trim(),
+        site_id: form.site_id || undefined,
       });
       setZtResult(res);
       setStep(2);
