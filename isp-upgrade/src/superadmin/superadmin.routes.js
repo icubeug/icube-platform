@@ -171,9 +171,9 @@ router.get('/tenants/:id', requireSuperadmin, async (req, res) => {
 
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
-    const [admins, routers, recentFees, notes] = await Promise.all([
-      db.query(`SELECT id, email, name, role, created_at FROM admins WHERE tenant_id=$1`, [req.params.id]),
-      db.query(`SELECT id, name, ip_address, vpn_connected, last_heartbeat_at, setup_completed FROM routers WHERE tenant_id=$1`, [req.params.id]),
+    const [admins, routers, recentFees, notes, sites, vouchers] = await Promise.all([
+      db.query(`SELECT id, email, name, role, created_at FROM admins WHERE tenant_id=$1 ORDER BY created_at ASC`, [req.params.id]),
+      db.query(`SELECT id, name, ip_address, vpn_connected, last_heartbeat_at, setup_completed, tier_name, model_name FROM routers WHERE tenant_id=$1 ORDER BY created_at DESC`, [req.params.id]),
       db.query(`SELECT * FROM platform_transactions WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 20`, [req.params.id]),
       db.query(`
         SELECT sn.*, su.name AS author_name
@@ -182,9 +182,11 @@ router.get('/tenants/:id', requireSuperadmin, async (req, res) => {
         WHERE sn.tenant_id=$1
         ORDER BY sn.created_at DESC
       `, [req.params.id]),
+      db.query(`SELECT id, name, location, status, created_at FROM sites WHERE tenant_id=$1 ORDER BY created_at DESC`, [req.params.id]).catch(() => []),
+      db.query(`SELECT id, code, status, use_case, channel, customer_phone, created_at FROM vouchers WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 30`, [req.params.id]).catch(() => []),
     ]);
 
-    res.json({ tenant, admins, routers, recentFees, notes });
+    res.json({ tenant, admins, routers, recentFees, notes, sites, vouchers });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -505,7 +507,7 @@ router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (
       vpnUsername: '', vpnPassword: '', ipsecSecret: process.env.VPN_IPSEC_SECRET||'icube-ipsec-2024',
     });
 
-    const installCmd = `/tool fetch url="https://139.84.247.205/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
+    const installCmd = `/tool fetch url="https://web.icubeug.net/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
 
     res.status(201).json({ router: newRouter, script, install_command: installCmd, bearer_token: bearerToken, install_token: installToken,
       config: { vpn_port: vpnPort, vpn_address: vpnAddress, tier: tier.tier_name, network: tier.network, gateway: tier.gateway, max_users: tier.max_users } });
@@ -528,6 +530,169 @@ router.get('/routers', requireSuperadmin, async (req, res) => {
       ORDER BY r.vpn_connected DESC, r.last_heartbeat_at DESC NULLS LAST
     `);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── TOTP Setup ────────────────────────────────────────────────────────────────
+// POST /api/superadmin/totp/setup — generate secret + QR code
+router.post('/totp/setup', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { authenticator } = require('otplib');
+  const QRCode = require('qrcode');
+  try {
+    const [user] = await db.query(
+      `SELECT id, email, totp_secret FROM superadmin_users WHERE id = $1`,
+      [req.superadmin.superadmin_id]
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    // If already verified, don't expose secret again
+    if (user.totp_verified) return res.status(400).json({ error: 'TOTP already set up. Reset it from settings.' });
+
+    const secret = user.totp_secret || authenticator.generateSecret();
+    if (!user.totp_secret) {
+      await db.query(
+        `UPDATE superadmin_users SET totp_secret = $1, totp_verified = FALSE WHERE id = $2`,
+        [secret, user.id]
+      );
+    }
+    const otpauthUrl = authenticator.keyuri(user.email, 'iCube Superadmin', secret);
+    const qrDataUrl  = await QRCode.toDataURL(otpauthUrl);
+    res.json({ secret, qr_code: qrDataUrl, otpauth_url: otpauthUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/superadmin/totp/verify-setup — verify first code and mark as verified
+router.post('/totp/verify-setup', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { authenticator } = require('otplib');
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'code required' });
+  try {
+    const [user] = await db.query(
+      `SELECT id, totp_secret FROM superadmin_users WHERE id = $1`,
+      [req.superadmin.superadmin_id]
+    );
+    if (!user?.totp_secret) return res.status(400).json({ error: 'TOTP not set up yet. Call /totp/setup first.' });
+    const valid = authenticator.verify({ token: String(code).replace(/\s/g,''), secret: user.totp_secret });
+    if (!valid) return res.status(400).json({ error: 'Invalid code. Check your authenticator app.' });
+    await db.query(
+      `UPDATE superadmin_users SET totp_verified = TRUE WHERE id = $1`, [user.id]
+    );
+    res.json({ ok: true, message: 'TOTP set up successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/superadmin/totp/status — check if current superadmin has TOTP
+router.get('/totp/status', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const [row] = await db.query(
+    `SELECT totp_verified FROM superadmin_users WHERE id = $1`, [req.superadmin.superadmin_id]
+  );
+  res.json({ has_totp: !!row?.totp_verified });
+});
+
+// ── Create Tenant ─────────────────────────────────────────────────────────────
+// POST /api/superadmin/tenants
+router.post('/tenants', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const crypto = require('crypto');
+  const { business_name, owner_name, owner_email, owner_phone, password, site_limit = 5, plan = 'free' } = req.body;
+  if (!business_name || !owner_email) return res.status(400).json({ error: 'business_name and owner_email required' });
+
+  const finalPassword = password || crypto.randomBytes(8).toString('hex');
+  const passwordHash  = await bcrypt.hash(finalPassword, 12);
+  const slug = business_name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+
+  try {
+    // Check email uniqueness across admins
+    const existing = await db.query(`SELECT id FROM admins WHERE email = $1`, [owner_email]);
+    if (existing.length) return res.status(400).json({ error: 'An admin with this email already exists' });
+
+    // Create tenant
+    const [tenant] = await db.query(`
+      INSERT INTO tenants (name, slug, owner_email, plan, status, max_sites)
+      VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *
+    `, [business_name, slug, owner_email, plan, site_limit]);
+
+    // Create owner admin
+    await db.query(`
+      INSERT INTO admins (tenant_id, name, email, phone, password_hash, role)
+      VALUES ($1, $2, $3, $4, $5, 'admin')
+    `, [tenant.id, owner_name || owner_email.split('@')[0], owner_email, owner_phone || null, passwordHash]);
+
+    res.status(201).json({
+      tenant,
+      credentials: { email: owner_email, password: finalPassword },
+      message: `Tenant "${business_name}" created successfully.`,
+    });
+  } catch (err) {
+    if (err.message.includes('unique') || err.message.includes('duplicate')) {
+      return res.status(400).json({ error: 'A tenant with this name or email already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Reset Tenant Admin Password ───────────────────────────────────────────────
+// POST /api/superadmin/tenants/:id/reset-password
+router.post('/tenants/:id/reset-password', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const crypto = require('crypto');
+  try {
+    const admins = await db.query(
+      `SELECT id, email FROM admins WHERE tenant_id = $1 ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END LIMIT 1`,
+      [req.params.id]
+    );
+    if (!admins.length) return res.status(404).json({ error: 'No admin found for this tenant' });
+    const admin = admins[0];
+    const newPassword = crypto.randomBytes(8).toString('hex');
+    const hash = await bcrypt.hash(newPassword, 12);
+    await db.query(`UPDATE admins SET password_hash = $1 WHERE id = $2`, [hash, admin.id]);
+    res.json({ email: admin.email, new_password: newPassword });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Delete Tenant (confirmed by business name on frontend) ────────────────────
+// POST /api/superadmin/tenants/:id/delete
+router.post('/tenants/:id/delete', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+
+  try {
+
+    // Fetch tenant info before deletion
+    const [tenant] = await db.query(`SELECT * FROM tenants WHERE id = $1`, [req.params.id]);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    // Cascade delete in correct order
+    const tid = req.params.id;
+    await db.query(`DELETE FROM vouchers             WHERE tenant_id = $1`, [tid]);
+    await db.query(`DELETE FROM packages             WHERE tenant_id = $1`, [tid]);
+    await db.query(`DELETE FROM customers            WHERE tenant_id = $1`, [tid]);
+    await db.query(`DELETE FROM routers              WHERE tenant_id = $1`, [tid]);
+    await db.query(`DELETE FROM sites                WHERE tenant_id = $1`, [tid]);
+    await db.query(`DELETE FROM float_accounts       WHERE tenant_id = $1`, [tid]).catch(() => {});
+    await db.query(`DELETE FROM float_transactions   WHERE tenant_id = $1`, [tid]).catch(() => {});
+    await db.query(`DELETE FROM disbursements        WHERE tenant_id = $1`, [tid]).catch(() => {});
+    await db.query(`DELETE FROM platform_transactions WHERE tenant_id = $1`, [tid]).catch(() => {});
+    await db.query(`DELETE FROM admins               WHERE tenant_id = $1`, [tid]);
+    await db.query(`DELETE FROM tenant_branding      WHERE tenant_id = $1`, [tid]).catch(() => {});
+    await db.query(`DELETE FROM tenants              WHERE id = $1`,        [tid]);
+
+    // Log deletion
+    await db.query(`
+      INSERT INTO deletion_log (deleted_by, deleted_by_email, entity_type, entity_id, entity_name)
+      VALUES ($1, $2, 'tenant', $3, $4)
+    `, [req.superadmin.superadmin_id, saUser.email, tid, tenant.name]).catch(() => {});
+
+    res.json({ ok: true, deleted_tenant: tenant.name, message: `Tenant "${tenant.name}" has been permanently deleted.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

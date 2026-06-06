@@ -4,7 +4,7 @@ const express = require('express');
 const router  = express.Router();
 const { detectRouterTier } = require('../routers/router-intelligence');
 
-const SERVER_IP = '139.84.247.205';
+const SERVER_IP = process.env.PLATFORM_DOMAIN || 'web.icubeug.net';
 
 function extractBearer(req) {
   const auth = req.headers.authorization || '';
@@ -449,5 +449,67 @@ function buildVPNScript(r) {
 :log info "iCube VPN configured for ${r.name} — ${peerIp}"
 `;
 }
+
+// ── Captive portal template script ────────────────────────────────────────────
+// POST /api/v1/router/:tenant_slug/scripts/captive
+// Bearer-token authenticated; body: { variation, theme }
+router.post('/:tenant_slug/scripts/captive', async (req, res) => {
+  const db = req.app.locals.db;
+  const { tenant_slug } = req.params;
+  const bearer = extractBearer(req);
+  const { variation = 'classic', theme = 'light' } = req.body || {};
+
+  try {
+    // Authenticate with bearer token (any router of this tenant)
+    const [router] = await db.query(`
+      SELECT r.*, t.slug, t.name AS tenant_name
+      FROM routers r
+      JOIN tenants t ON t.id = r.tenant_id
+      WHERE t.slug = $1 AND r.bearer_token = $2
+      LIMIT 1
+    `, [tenant_slug, bearer]);
+
+    if (!router) return res.status(401).type('text/plain').send('# Unauthorized: invalid token');
+
+    const portalUrl = `https://web.icubeug.net/portal/${tenant_slug}?template=${variation}&theme=${theme}`;
+    const profileName = 'iCube-Hotspot';
+
+    const script = `# iCube Captive Portal Template Installation
+# Template: ${variation}  Theme: ${theme}
+# Generated: ${new Date().toISOString()}
+
+:log info "Installing iCube captive portal template: ${variation} (${theme})"
+
+# Download captive portal page from iCube
+/tool fetch url="${portalUrl}&format=html" dst-path="icube-login.html" mode=https
+
+# Set the login page on the hotspot profile
+/ip hotspot profile set [find name="${profileName}"] login-by=http-pap html-directory=hotspot
+
+# Copy the login page into the hotspot directory
+/file move icube-login.html hotspot/login.html
+
+:delay 1s
+
+:log info "iCube captive portal (${variation}/${theme}) installed successfully"
+:put "Template installed. Hotspot login page updated."
+`;
+
+    res.type('text/plain')
+       .setHeader('Content-Disposition', `attachment; filename="icube-captive-${variation}-${theme}.rsc"`)
+       .send(script);
+
+    // Persist the template selection to tenant_branding
+    await db.query(`
+      INSERT INTO tenant_branding (tenant_id, portal_template, portal_theme)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (tenant_id) DO UPDATE
+        SET portal_template = EXCLUDED.portal_template,
+            portal_theme    = EXCLUDED.portal_theme
+    `, [router.tenant_id, variation, theme]).catch(() => {});
+  } catch (err) {
+    res.status(500).type('text/plain').send(`# Error: ${err.message}`);
+  }
+});
 
 module.exports = router;

@@ -56,7 +56,7 @@ function generateZeroTouchScript({
   vpnType = 'wireguard', // 'wireguard' | 'l2tp'
   vpnUsername = '', vpnPassword = '', ipsecSecret = 'icube-ipsec-2024',
 }) {
-  const SERVER_IP = '139.84.247.205';
+  const SERVER_IP = process.env.PLATFORM_DOMAIN || 'web.icubeug.net';
   const t         = tier || ROUTER_TIERS.tier1;
   const isL009    = model && /L009/i.test(model);
   const useL2TP   = vpnType === 'l2tp';

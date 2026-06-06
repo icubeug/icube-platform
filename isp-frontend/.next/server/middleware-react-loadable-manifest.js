@@ -1,1 +1,0 @@
-self.__REACT_LOADABLE_MANIFEST="{\"app/admin/page.tsx -> @/components/admin/RevenueChart\":{\"id\":\"app/admin/page.tsx -> @/components/admin/RevenueChart\",\"files\":[\"static/chunks/_app-pages-browser_components_admin_RevenueChart_tsx.js\"]}}"

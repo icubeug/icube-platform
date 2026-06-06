@@ -165,4 +165,34 @@ router.post('/api-credentials/regenerate', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/v1/settings/portal-template — get active template + theme
+router.get('/portal-template', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  try {
+    const [row] = await db.query(
+      `SELECT portal_template, portal_theme FROM tenant_branding WHERE tenant_id = $1`, [tid]
+    );
+    res.json({ portal_template: row?.portal_template || 'classic', portal_theme: row?.portal_theme || 'light' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/v1/settings/portal-template — save active template + theme
+router.put('/portal-template', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  const { portal_template, portal_theme } = req.body;
+  if (!portal_template) return res.status(400).json({ error: 'portal_template required' });
+  try {
+    await db.query(`
+      INSERT INTO tenant_branding (tenant_id, portal_template, portal_theme)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (tenant_id) DO UPDATE
+        SET portal_template = EXCLUDED.portal_template,
+            portal_theme    = EXCLUDED.portal_theme
+    `, [tid, portal_template, portal_theme || 'light']);
+    res.json({ ok: true, portal_template, portal_theme: portal_theme || 'light' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

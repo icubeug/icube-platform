@@ -151,8 +151,8 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
   const poolS       = pool_start   || tier?.poolStart  || '192.168.1.2';
   const poolE       = pool_end     || tier?.poolEnd    || '192.168.1.254';
 
-  const serverIp     = platformSettings.icube_server_ip     || '139.84.247.205';
-  const portalDomain = platformSettings.icube_portal_domain || '139.84.247.205';
+  const serverIp     = platformSettings.icube_server_ip     || 'web.icubeug.net';
+  const portalDomain = platformSettings.icube_portal_domain || 'web.icubeug.net';
   const wgPrivKey    = router.wireguard_private_key;
   const wgPeerIp     = router.wireguard_peer_ip;
   const wgServerPub  = process.env.WG_SERVER_PUBLIC_KEY || '<WG_SERVER_PUBLIC_KEY>';

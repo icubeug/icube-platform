@@ -92,10 +92,10 @@ router.post('/trash/empty', async (req, res) => {
   const db  = req.app.locals.db;
   const tid = req.tenant.id;
   try {
-    const result = await db.query(
-      `DELETE FROM vouchers WHERE tenant_id = $1 AND deleted_at IS NOT NULL`, [tid]
+    const deleted = await db.query(
+      `DELETE FROM vouchers WHERE tenant_id = $1 AND deleted_at IS NOT NULL RETURNING id`, [tid]
     );
-    res.json({ deleted: result.rowCount ?? 0 });
+    res.json({ deleted: deleted.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

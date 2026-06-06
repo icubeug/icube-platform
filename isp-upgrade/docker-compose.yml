@@ -1,43 +1,54 @@
-# docker-compose.yml  (FULL UPGRADED STACK)
-# Covers: Core API, AI service, FreeRADIUS, PostgreSQL, Redis, Nginx
-
+# docker-compose.yml — iCube Platform Full Stack
 version: '3.9'
 
 services:
 
-  # ── Core API (Express — all modules) ────────────────────────────────────────
+  # ── Core API ──────────────────────────────────────────────────────────────────
   api:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     environment:
-      NODE_ENV: production
+      NODE_ENV:             production
       DATABASE_URL:         ${DATABASE_URL}
       REDIS_URL:            redis://redis:6379
       JWT_SECRET:           ${JWT_SECRET}
       AGENT_JWT_SECRET:     ${AGENT_JWT_SECRET}
-      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY}
+      ANTHROPIC_API_KEY:    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
       STRIPE_SECRET_KEY:    ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET:${STRIPE_WEBHOOK_SECRET}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       MTN_API_KEY:          ${MTN_API_KEY}
       MTN_API_SECRET:       ${MTN_API_SECRET}
       MTN_COLLECTION_URL:   ${MTN_COLLECTION_URL}
       AIRTEL_CLIENT_ID:     ${AIRTEL_CLIENT_ID}
       AIRTEL_CLIENT_SECRET: ${AIRTEL_CLIENT_SECRET}
-      SMS_PROVIDER:         ${SMS_PROVIDER}         # africas_talking | nexmo
+      SMS_PROVIDER:         ${SMS_PROVIDER}
       SMS_API_KEY:          ${SMS_API_KEY}
+      SMS_USERNAME:         ${SMS_USERNAME}
       SMS_SENDER_ID:        ${SMS_SENDER_ID}
+      SUPERADMIN_JWT_SECRET: ${SUPERADMIN_JWT_SECRET}
+      SA_SECRET:            ${SA_SECRET}
       PORT:                 3000
+      WG_CONFIG_DIR:        /config/wireguard
+      WG_SERVER_PUBLIC_KEY: ${WG_SERVER_PUBLIC_KEY:-}
+      WG_SERVER_URL:        ${WG_SERVER_URL:-139.84.247.205}
+      WG_SERVER_PORT:       51820
+      PLATFORM_DOMAIN:      ${PLATFORM_DOMAIN:-icubeug.net}
+      EMAIL_FROM:           icube.support@icubeug.net
+      EMAIL_PASSWORD:       datN6yyDWJVm
+      EMAIL_HOST:           smtp.zoho.com
+      EMAIL_PORT:           465
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
-      freeradius:
-        condition: service_started
     volumes:
       - ./logs:/app/logs
+      - ./config/wireguard:/config/wireguard
     networks:
       - isp-network
     healthcheck:
@@ -46,7 +57,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -56,7 +67,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./src/schema:/docker-entrypoint-initdb.d   # auto-runs migrations on first start
+      - ./src/schema:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U isp_user -d isp_db"]
       interval: 10s
@@ -65,7 +76,7 @@ services:
     networks:
       - isp-network
 
-  # ── Redis ────────────────────────────────────────────────────────────────────
+  # ── Redis ─────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -75,7 +86,7 @@ services:
     networks:
       - isp-network
 
-  # ── FreeRADIUS ───────────────────────────────────────────────────────────────
+  # ── FreeRADIUS ────────────────────────────────────────────────────────────────
   freeradius:
     image: freeradius/freeradius-server:latest
     restart: unless-stopped
@@ -87,15 +98,42 @@ services:
       DB_USER:     isp_user
       DB_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "1812:1812/udp"   # Auth
-      - "1813:1813/udp"   # Accounting
+      - "1812:1812/udp"
+      - "1813:1813/udp"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - isp-network
 
-  # ── Nginx reverse proxy ───────────────────────────────────────────────────────
+  # ── WireGuard VPN ─────────────────────────────────────────────────────────────
+  wireguard:
+    image: linuxserver/wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      PUID:            1000
+      PGID:            1000
+      TZ:              Africa/Kampala
+      SERVERURL:       ${WG_SERVER_URL:-139.84.247.205}
+      SERVERPORT:      51820
+      PEERS:           0
+      PEERDNS:         auto
+      INTERNAL_SUBNET: 10.99.0.0/24
+      ALLOWEDIPS:      0.0.0.0/0
+    volumes:
+      - ./config/wireguard:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "51820:51820/udp"
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      - isp-network
+
+  # ── Nginx ─────────────────────────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -104,25 +142,15 @@ services:
       - "443:443"
     volumes:
       - ./config/nginx:/etc/nginx/conf.d
-      - ./config/ssl:/etc/nginx/ssl
-      - certbot-www:/var/www/certbot
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - api
     networks:
       - isp-network
 
-  # ── Certbot (SSL auto-renewal) ────────────────────────────────────────────────
-  certbot:
-    image: certbot/certbot
-    volumes:
-      - ./config/ssl:/etc/letsencrypt
-      - certbot-www:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
-
 volumes:
   pgdata:
   redisdata:
-  certbot-www:
 
 networks:
   isp-network:

@@ -6,6 +6,7 @@
 const bcrypt   = require('bcrypt');
 const { pushPPPoEUser, suspendPPPoEUser } = require('../multirouter/mikrotik.adapter');
 const { sendSMS } = require('../notifications/sms.service');
+const { normalizePhone } = require('../utils/phone');
 
 // ── Create subscriber ─────────────────────────────────────────────────────────
 async function createSubscriber(db, redis, {
@@ -14,6 +15,8 @@ async function createSubscriber(db, redis, {
   username, password, plan_id,
   ip_address = null,
 }) {
+  phone = normalizePhone(phone);
+
   // Validate plan
   const planRows = await db.query(
     `SELECT * FROM pppoe_plans WHERE id = $1 AND active = true`, [plan_id]

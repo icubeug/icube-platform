@@ -7,13 +7,14 @@ const bcrypt = require('bcrypt');
 const { generateVoucherCode } = require('../vouchers/voucher.service');
 const { sendSMS } = require('../notifications/sms.service');
 const { createPayment } = require('../payments/payment.service');
+const { normalizePhone } = require('../utils/phone');
 
 // ── Agent authentication (PIN-based, lightweight for field use) ──────────────
 
 async function authenticateAgent(db, { phone, pin }) {
   const rows = await db.query(
     `SELECT * FROM agents WHERE phone = $1 AND status = 'active'`,
-    [phone]
+    [normalizePhone(phone)]
   );
   if (!rows.length) throw new Error('Agent not found or suspended');
 
@@ -79,13 +80,15 @@ async function processSale(db, redis, {
     metadata: { agent_id, agent_name: agent.name },
   });
 
+  const normalized_customer_phone = normalizePhone(customer_phone);
+
   // 5. Record POS sale
   await db.query(`
     INSERT INTO pos_sales
       (agent_id, site_id, package_id, customer_phone, voucher_id,
        amount_ugx, commission_ugx, payment_method)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-  `, [agent_id, site_id, package_id, customer_phone,
+  `, [agent_id, site_id, package_id, normalized_customer_phone,
       voucher.id, amount, commission, payment_method]);
 
   // 6. Credit agent wallet
@@ -98,7 +101,7 @@ async function processSale(db, redis, {
     `Valid: ${pkg.duration_label}\n` +
     `Connect to WiFi and enter this code. Enjoy!`;
 
-  await sendSMS(customer_phone, smsBody);
+  await sendSMS(normalized_customer_phone, smsBody);
 
   // 8. Bust AI context cache so assistant sees fresh data
   await redis.del('ai:site_status', 'ai:network_metrics');
@@ -109,7 +112,7 @@ async function processSale(db, redis, {
     package_name: pkg.name,
     amount_ugx: amount,
     commission_ugx: commission,
-    customer_phone,
+    customer_phone: normalized_customer_phone,
     sms_sent: true,
   };
 }

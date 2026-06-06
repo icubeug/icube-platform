@@ -7,25 +7,11 @@ const { provisionRouterPeer, getVpnStatus }       = require('../vpn/wireguard.se
 const { detectRouterTier, generateZeroTouchScript } = require('../routers/router-intelligence');
 
 // POST /api/v1/routers/zero-touch — create router without IP (zero-touch onboarding)
-// Requires superadmin impersonation JWT — pure tenant JWTs are blocked
+// Available to all authenticated tenants
 router.post('/zero-touch', async (req, res) => {
   const db  = req.app.locals.db;
   const tid = req.tenant_id;
 
-  // Block non-impersonating tenant JWTs
-  const authHeader = req.headers.authorization || '';
-  if (authHeader.startsWith('Bearer ')) {
-    try {
-      const jwtLib  = require('jsonwebtoken');
-      const payload = jwtLib.verify(authHeader.slice(7).trim(), process.env.JWT_SECRET || 'dev-jwt-secret');
-      if (payload.tenant_id && !payload.impersonating && !payload.superadmin_id) {
-        return res.status(403).json({
-          error: 'Router setup requires iCube support. Email: support@icubeug.net',
-          contact: true,
-        });
-      }
-    } catch {}
-  }
   const { name, model, site_id, vpn_type = 'wireguard' } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
@@ -112,7 +98,7 @@ router.post('/zero-touch', async (req, res) => {
     });
 
     // Single install command
-    const installCmd = `/tool fetch url="https://${process.env.SERVER_IP||'139.84.247.205'}/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
+    const installCmd = `/tool fetch url="https://${process.env.SERVER_IP||'web.icubeug.net'}/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
 
     res.status(201).json({
       router: newRouter,

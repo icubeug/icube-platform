@@ -3,27 +3,45 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 
-function generateCode() {
-  return Math.random().toString(36).substring(2, 10).toUpperCase();
+const CHARSETS = {
+  digits:          '0123456789',
+  uppercase:       'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  lowercase:       'abcdefghijklmnopqrstuvwxyz',
+  uppercase_alpha: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  lowercase_alpha: '0123456789abcdefghijklmnopqrstuvwxyz',
+};
+
+function generateCode(format = 'digits', length = 8) {
+  const charset = CHARSETS[format] || CHARSETS.digits;
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += charset[Math.floor(Math.random() * charset.length)];
+  }
+  return code;
 }
 
 // GET /api/v1/vouchers?status=unused&site_id=...
 router.get('/', async (req, res) => {
   const { status, site_id } = req.query;
-  const limit  = Math.min(parseInt(req.query.limit) || 50, 200);
+  const limit  = Math.min(parseInt(req.query.limit) || 200, 1000);
   const offset = parseInt(req.query.offset) || 0;
   try {
-    const conditions = ['1=1'];
-    const params = [];
-    if (status) { conditions.push(`v.status = $${params.length + 1}`); params.push(status); }
+    const conditions = ['v.tenant_id = $1'];
+    const params = [req.tenant_id];
+    if (status)  { conditions.push(`v.status = $${params.length + 1}`);  params.push(status); }
     if (site_id) { conditions.push(`v.site_id = $${params.length + 1}`); params.push(site_id); }
     params.push(limit, offset);
 
     const rows = await req.app.locals.db.query(`
-      SELECT v.*, p.name AS package_name, s.name AS site_name
+      SELECT
+        v.id, v.code AS username, v.code, p.name AS package_name,
+        v.status, v.first_login_at, v.expires_at,
+        v.use_case, v.note, v.created_at, v.deleted_at,
+        v.site_id, v.package_id, v.tenant_id, v.source, v.agent_id,
+        s.name AS site_name
       FROM vouchers v
       LEFT JOIN packages p ON p.id = v.package_id
-      LEFT JOIN sites s ON s.id = v.site_id
+      LEFT JOIN sites    s ON s.id = v.site_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY v.created_at DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -35,10 +53,16 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/v1/vouchers/generate
-// Body: { package_id, site_id, count? }
+// Body: { package_id, site_id?, count?, format?, length?, note?, use_case?, prefix? }
 router.post('/generate', async (req, res) => {
-  const { package_id, site_id, count = 1 } = req.body;
-  if (!package_id || !site_id) return res.status(400).json({ error: 'package_id and site_id required' });
+  const {
+    package_id, site_id = null,
+    count = 10, format = 'digits', length = 8,
+    note = null, use_case = 'admin_sale', prefix = '',
+    expires_at = null,
+  } = req.body;
+  if (!package_id) return res.status(400).json({ error: 'package_id required' });
+  const qty = Math.max(1, Math.min(parseInt(count) || 10, 500));
 
   try {
     const pkg = await req.app.locals.db.query(
@@ -47,13 +71,13 @@ router.post('/generate', async (req, res) => {
     if (!pkg.length) return res.status(404).json({ error: 'Package not found' });
 
     const generated = [];
-    for (let i = 0; i < Math.min(count, 100); i++) {
-      const code = generateCode();
+    for (let i = 0; i < qty; i++) {
+      const code = prefix + generateCode(format, length);
       const rows = await req.app.locals.db.query(`
-        INSERT INTO vouchers (site_id, package_id, code, tenant_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO vouchers (site_id, package_id, code, tenant_id, note, use_case)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id, code, status
-      `, [site_id, package_id, code, req.tenant_id]);
+      `, [site_id, package_id, code, req.tenant_id, note, use_case]);
       generated.push(rows[0]);
     }
     res.status(201).json({ generated: generated.length, vouchers: generated });

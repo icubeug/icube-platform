@@ -31,7 +31,8 @@ async function resolveTenant(req, res, next) {
   }
 
   // 2. Attach to request
-  req.tenant = tenant;
+  req.tenant    = tenant;
+  req.tenant_id = tenant.id;   // convenience alias used across route files
 
   // 3. Set PostgreSQL session variable for RLS
   //    This runs before every query in this request's DB pool connection.

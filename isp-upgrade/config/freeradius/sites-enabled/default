@@ -1,0 +1,95 @@
+##
+## sites-enabled/default — iCube FreeRADIUS default virtual server
+## Handles: hotspot voucher auth + PPPoE auth + RADIUS accounting
+##
+
+server default {
+
+  # ── listen blocks are inherited from radiusd.conf ──
+
+  # ── authorize ──────────────────────────────────────────────────────────────
+  # Determines: is this user valid? which Auth-Type to use?
+  authorize {
+    filter_username       # reject obviously invalid usernames
+    preprocess            # pre-processing (huntgroups, hints)
+    chap                  # if CHAP password present, set Auth-Type=CHAP
+    mschap                # if MS-CHAP present, set Auth-Type=MS-CHAP
+    suffix                # strip realm/domain from username
+    eap {                 # EAP: handle EAP-Message only
+      ok = return
+    }
+    sql                   # look up radcheck / radreply from PostgreSQL
+    expiration            # check Expiration attribute
+    logintime             # check Login-Time attribute
+    pap                   # set Auth-Type=PAP
+  }
+
+  # ── authenticate ───────────────────────────────────────────────────────────
+  # Validates the password using the method selected in authorize
+  authenticate {
+    Auth-Type PAP {
+      pap
+    }
+    Auth-Type CHAP {
+      chap
+    }
+    Auth-Type MS-CHAP {
+      mschap
+    }
+    eap
+  }
+
+  # ── preacct ────────────────────────────────────────────────────────────────
+  preacct {
+    preprocess
+    acct_unique           # generate Acct-Unique-Session-Id
+    suffix
+    files
+  }
+
+  # ── accounting ─────────────────────────────────────────────────────────────
+  # Writes Start / Stop / Interim-Update to radacct table
+  accounting {
+    detail                # write detail file (useful for debugging)
+    unix                  # write to /var/log/freeradius/radacct
+    sql                   # write to PostgreSQL radacct table
+    exec                  # execute external program if needed
+    attr_filter.accounting_response
+  }
+
+  # ── session ────────────────────────────────────────────────────────────────
+  session {
+    sql                   # check for simultaneous-use via radacct
+  }
+
+  # ── post-auth ──────────────────────────────────────────────────────────────
+  # Runs after successful authentication
+  post-auth {
+    update reply {
+      &Reply-Message := "iCube access granted"
+    }
+    sql                   # log to radpostauth table
+    exec
+    remove_reply_message_if_eap
+
+    Post-Auth-Type REJECT {
+      sql                 # log rejections too
+      attr_filter.access_reject
+      eap
+      remove_reply_message_if_eap
+    }
+
+    Post-Auth-Type Challenge {
+      # nothing
+    }
+  }
+
+  # ── pre-proxy ──────────────────────────────────────────────────────────────
+  pre-proxy {
+  }
+
+  # ── post-proxy ─────────────────────────────────────────────────────────────
+  post-proxy {
+    eap
+  }
+}

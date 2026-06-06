@@ -1,0 +1,128 @@
+##
+## mods-enabled/sql — iCube FreeRADIUS PostgreSQL module
+## Tables: radcheck, radreply, radacct, nas, radusergroup, radgroupcheck, radgroupreply
+##
+
+sql {
+  dialect      = "postgresql"
+  driver       = "rlm_sql_postgresql"
+
+  # Server connection — injected by Docker environment
+  server       = "${ENV:DB_HOST:-postgres}"
+  port         = 5432
+  login        = "${ENV:DB_USER:-isp_user}"
+  password     = "${ENV:DB_PASSWORD}"
+  radius_db    = "${ENV:DB_NAME:-isp_db}"
+
+  # Connection pool
+  pool {
+    start      = 5
+    min        = 3
+    max        = 32
+    spare      = 10
+    uses       = 0
+    retry_delay = 30
+    lifetime   = 0
+    idle_timeout = 60
+  }
+
+  # FreeRADIUS standard RADIUS table names (match our schema)
+  authcheck_table  = "radcheck"
+  authreply_table  = "radreply"
+  groupcheck_table = "radgroupcheck"
+  groupreply_table = "radgroupreply"
+  usergroup_table  = "radusergroup"
+  acct_table1      = "radacct"
+  acct_table2      = "radacct"
+  postauth_table   = "radpostauth"
+
+  # Read NAS clients from the nas table (dynamic clients)
+  client_table     = "nas"
+
+  # Read clients from DB so per-router secrets are respected
+  read_clients     = yes
+  client_query     = "SELECT nasname AS ipaddr, shortname, secret, type, server, community \
+                      FROM nas WHERE nasname <> '' ORDER BY id"
+
+  # How group lookups work
+  group_membership_query = "SELECT groupname FROM radusergroup WHERE username = '%{SQL-User-Name}' ORDER BY priority"
+
+  authorize_check_query = "SELECT id, username, attribute, value, op \
+                            FROM radcheck \
+                            WHERE username = '%{SQL-User-Name}' \
+                            ORDER BY id"
+
+  authorize_reply_query = "SELECT id, username, attribute, value, op \
+                            FROM radreply \
+                            WHERE username = '%{SQL-User-Name}' \
+                            ORDER BY id"
+
+  authorize_group_check_query = "SELECT id, groupname, attribute, value, op \
+                                   FROM radgroupcheck \
+                                   WHERE groupname = '%{Sql-Group}' \
+                                   ORDER BY id"
+
+  authorize_group_reply_query = "SELECT id, groupname, attribute, value, op \
+                                   FROM radgroupreply \
+                                   WHERE groupname = '%{Sql-Group}' \
+                                   ORDER BY id"
+
+  # Accounting queries
+  accounting_onoff_query = "UPDATE radacct \
+                              SET AcctStopTime = TO_TIMESTAMP('%{integer:Event-Timestamp}'), \
+                                  AcctSessionTime = '%{integer:Acct-Session-Time}', \
+                                  AcctTerminateCause = '%{Acct-Terminate-Cause}', \
+                                  AcctStopDelay = '%{integer:Acct-Delay-Time}' \
+                              WHERE AcctStopTime IS NULL \
+                                AND NASIPAddress = '%{NAS-IP-Address}' \
+                                AND AcctStartDelay IS NOT NULL"
+
+  accounting_update_query = "UPDATE radacct \
+                               SET FramedIPAddress = '%{Framed-IP-Address}', \
+                                   AcctSessionTime = '%{integer:Acct-Session-Time}', \
+                                   AcctInputOctets = '%{integer:Acct-Input-Octets}' + \
+                                     (CAST('%{integer:Acct-Input-Gigawords}' AS BIGINT) * 4294967296), \
+                                   AcctOutputOctets = '%{integer:Acct-Output-Octets}' + \
+                                     (CAST('%{integer:Acct-Output-Gigawords}' AS BIGINT) * 4294967296) \
+                               WHERE AcctSessionId = '%{Acct-Session-Id}' \
+                                 AND UserName = '%{SQL-User-Name}' \
+                                 AND NASIPAddress = '%{NAS-IP-Address}' \
+                                 AND AcctStopTime IS NULL"
+
+  accounting_start_query = "INSERT INTO radacct \
+                              (AcctSessionId, AcctUniqueId, UserName, Realm, NASIPAddress, NASPortId, \
+                               NASPortType, AcctStartTime, AcctAuthentic, ConnectInfo_start, \
+                               CalledStationId, CallingStationId, ServiceType, FramedProtocol, \
+                               FramedIPAddress, AcctStartDelay) \
+                             VALUES \
+                              ('%{Acct-Session-Id}', '%{Acct-Unique-Session-Id}', '%{SQL-User-Name}', \
+                               '%{Realm}', '%{NAS-IP-Address}', '%{NAS-Port-Id}', '%{NAS-Port-Type}', \
+                               TO_TIMESTAMP('%{integer:Event-Timestamp}'), '%{Acct-Authentic}', \
+                               '%{Connect-Info}', '%{Called-Station-Id}', '%{Calling-Station-Id}', \
+                               '%{Service-Type}', '%{Framed-Protocol}', '%{Framed-IP-Address}', \
+                               '%{integer:Acct-Delay-Time}')"
+
+  accounting_stop_query  = "UPDATE radacct \
+                              SET AcctStopTime = TO_TIMESTAMP('%{integer:Event-Timestamp}'), \
+                                  AcctSessionTime = '%{integer:Acct-Session-Time}', \
+                                  AcctInputOctets = '%{integer:Acct-Input-Octets}' + \
+                                    (CAST('%{integer:Acct-Input-Gigawords}' AS BIGINT) * 4294967296), \
+                                  AcctOutputOctets = '%{integer:Acct-Output-Octets}' + \
+                                    (CAST('%{integer:Acct-Output-Gigawords}' AS BIGINT) * 4294967296), \
+                                  AcctTerminateCause = '%{Acct-Terminate-Cause}', \
+                                  ConnectInfo_stop = '%{Connect-Info}', \
+                                  AcctStopDelay = '%{integer:Acct-Delay-Time}' \
+                              WHERE AcctSessionId = '%{Acct-Session-Id}' \
+                                AND UserName = '%{SQL-User-Name}' \
+                                AND NASIPAddress = '%{NAS-IP-Address}' \
+                                AND AcctStopTime IS NULL"
+
+  # Post-auth logging
+  postauth_query = "INSERT INTO radpostauth \
+                     (username, pass, reply, nasipaddress, authdate) \
+                    VALUES \
+                     ('%{User-Name}', '%{User-Password:-Chap-Password}', '%{reply:Packet-Type}', \
+                      '%{NAS-IP-Address}', NOW())"
+
+  safe-characters = "@abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_: /"
+}

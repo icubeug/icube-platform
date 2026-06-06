@@ -2,8 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { runBillingCycle } = require('./pppoe.service');
-
-const db  = () => null; // resolved via req.app.locals.db
+const { normalizePhone } = require('../utils/phone');
 
 // GET /api/v1/pppoe/subscribers
 router.get('/subscribers', async (req, res) => {
@@ -79,7 +78,7 @@ router.post('/subscribers', async (req, res) => {
         (full_name, phone, email, username, password_hash, plan_id, router_id, site_id, tenant_id)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
       RETURNING id, full_name, username, status
-    `, [full_name, phone, email, username, password_hash, plan_id, router_id, site_id, req.tenant_id]);
+    `, [full_name, normalizePhone(phone), email, username, password_hash, plan_id, router_id, site_id, req.tenant_id]);
     res.status(201).json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });

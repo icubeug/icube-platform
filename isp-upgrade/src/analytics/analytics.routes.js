@@ -119,7 +119,7 @@ router.get('/usage', async (req, res) => {
 
     const cur  = current[0]  || {};
     const prv  = prev[0]     || {};
-    const tot  = parseInt(termination.reduce((s: number, t: any) => s + parseInt(t.count, 10), 0), 10) || 1;
+    const tot  = parseInt(termination.reduce((s, t) => s + parseInt(t.count, 10), 0), 10) || 1;
 
     res.json({
       total_data_gb:          parseFloat(cur.total_data_gb   || 0),
@@ -131,21 +131,21 @@ router.get('/usage', async (req, res) => {
       prev_avg_session_minutes: parseFloat(prv.avg_session_minutes || 0),
       prev_total_sessions:    parseInt(prv.total_sessions    || 0, 10),
       daily_usage:            daily.map(d => ({ date: d.date, gb: parseFloat(d.gb) })),
-      termination_reasons:    termination.map((t: any) => ({
+      termination_reasons:    termination.map((t) => ({
         reason: t.reason, count: parseInt(t.count, 10),
         pct: Math.round(parseInt(t.count, 10) / tot * 100),
       })),
-      top_users:    topUsers.map((u: any) => ({
+      top_users:    topUsers.map((u) => ({
         username:  u.username,
         data_gb:   parseFloat(u.data_gb),
         sessions:  parseInt(u.sessions, 10),
         last_seen: u.last_seen,
       })),
-      package_usage: pkgUsage.map((p: any) => ({
+      package_usage: pkgUsage.map((p) => ({
         package_name: p.package_name,
         data_gb:      parseFloat(p.data_gb),
       })),
-      recent_sessions: recentSessions.map((s: any) => ({
+      recent_sessions: recentSessions.map((s) => ({
         username:       s.username,
         mac_address:    s.mac_address,
         ip_address:     s.ip_address,
