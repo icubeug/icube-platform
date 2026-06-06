@@ -171,6 +171,9 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
 # Model:     ${modelName}
 # Tenant:    ${tenant}
 # Generated: ${timestamp}
+:local icubeApiHost "${serverIp}"
+:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiCidr ($icubeApiIp . "/32")
 /system identity set name="${router.name}"
 /system clock set time-zone-name=Africa/Kampala
 /system ntp client set enabled=yes server-dns-name=time.google.com
@@ -180,14 +183,20 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
 /ip dhcp-server network add address=${networkBase}/${prefix} gateway=${gw} dns-server=${dns_servers}
 /ip dns set servers=${dns_servers} allow-remote-requests=yes
 /ip firewall nat add chain=srcnat out-interface=${wan_interface} action=masquerade comment="iCube NAT"
-/radius add service=hotspot,login address=${serverIp} secret="${router.radius_secret || 'MISSING'}" authentication-port=1812 accounting-port=1813 timeout=3000
+/radius add service=hotspot,login address=$icubeApiIp secret="${router.radius_secret || 'MISSING'}" authentication-port=1812 accounting-port=1813 timeout=3000
 /radius incoming add accept=yes port=3799
-${wgPrivKey ? `/interface wireguard add name=icube-vpn private-key="${wgPrivKey}" listen-port=13231 comment="iCube WireGuard VPN"
-/interface wireguard peers add interface=icube-vpn public-key="${wgServerPub}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=10.99.0.0/24,${serverIp}/32 persistent-keepalive=25
-/ip address add address=${wgPeerIp}/24 interface=icube-vpn comment="iCube VPN IP"
-/ip route add dst-address=${serverIp}/32 gateway=${wgPeerIp} comment="iCube Server Route"` : '# WireGuard not provisioned yet'}
+${wgPrivKey ? `:local rosver [/system resource get version]
+:local rosMajor [:tonum [:pick $rosver 0 [:find $rosver "."]]]
+:if ($rosMajor >= 7) do={
+  /interface wireguard add name=icube-vpn private-key="${wgPrivKey}" listen-port=13231 comment="iCube WireGuard VPN"
+  /interface wireguard peers add interface=icube-vpn public-key="${wgServerPub}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=("10.99.0.0/24," . $icubeApiCidr) persistent-keepalive=25
+  /ip address add address=${wgPeerIp}/24 interface=icube-vpn comment="iCube VPN IP"
+  /ip route add dst-address=$icubeApiCidr gateway=icube-vpn comment="iCube Server Route"
+} else={
+  :log warning ("iCube WireGuard skipped: RouterOS " . $rosver . " does not support /interface wireguard. Upgrade to RouterOS v7 for VPN remote access.")
+}` : '# WireGuard not provisioned yet'}
 ${isL009 ? '/interface ethernet set [find] l2mtu=1598\n/interface bridge set [find] fast-forward=yes' : ''}
-/ip service set api address=${serverIp}/32 disabled=no port=8728
+/ip service set api address=$icubeApiCidr disabled=no port=8728
 ${apiUserScript}
 /ip service disable telnet,ftp,www,ssh
 :log info "iCube setup complete for ${router.name}"

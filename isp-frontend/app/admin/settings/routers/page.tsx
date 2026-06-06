@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { api, TenantCredentials } from '@/lib/api';
 import { Copy, Eye, EyeOff, Check, AlertCircle } from 'lucide-react';
 
-const SERVER = '139.84.247.205';
+const SERVER = 'web.icubeug.net';
 
 // ── Badge pill ────────────────────────────────────────────────────────────────
 function Badge({ label, bg, color }: { label: string; bg: string; color: string }) {

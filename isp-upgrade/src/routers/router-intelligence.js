@@ -97,13 +97,18 @@ function generateZeroTouchScript({
   use-ipsec=yes \\
   disabled=no \\
   comment="iCube VPN"
-/ip route add dst-address=${SERVER_IP}/32 gateway=icube-vpn comment="iCube Server Route"` : `
+/ip route add dst-address=$icubeApiCidr gateway=icube-vpn comment="iCube Server Route"` : `
 # ── WireGuard VPN (RouterOS v7+) ───────────────────────────────
-${wgAvailabilityCheck}
-/interface wireguard add name=icube-vpn private-key="${privateKey}" listen-port=13231 comment="iCube VPN"
-/interface wireguard peers add interface=icube-vpn public-key="${serverPublicKey}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=10.99.0.0/24,${SERVER_IP}/32 persistent-keepalive=25 comment="iCube Server"
-/ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
-/ip route add dst-address=${SERVER_IP}/32 gateway=${peerIp} comment="iCube Server Route"`;
+:local rosMajor [:tonum [:pick $rosver 0 [:find $rosver "."]]]
+:if ($rosMajor >= 7) do={
+  ${wgAvailabilityCheck}
+  /interface wireguard add name=icube-vpn private-key="${privateKey}" listen-port=13231 comment="iCube VPN"
+  /interface wireguard peers add interface=icube-vpn public-key="${serverPublicKey}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=("10.99.0.0/24," . $icubeApiCidr) persistent-keepalive=25 comment="iCube Server"
+  /ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
+  /ip route add dst-address=$icubeApiCidr gateway=icube-vpn comment="iCube Server Route"
+} else={
+  :log warning ("iCube WireGuard skipped: RouterOS " . $rosver . " does not support /interface wireguard. Upgrade to RouterOS v7 for VPN remote access.")
+}`;
 
   return `# ================================================================
 # iCube Router Setup — ${routerName}
@@ -112,6 +117,9 @@ ${wgAvailabilityCheck}
 # ================================================================
 
 ${rosVersionCheck}
+:local icubeApiHost "${SERVER_IP}"
+:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiCidr ($icubeApiIp . "/32")
 /system identity set name="${routerName}"
 /system clock set time-zone-name=Africa/Kampala
 /system ntp client set enabled=yes server-dns-name=time.google.com
@@ -126,12 +134,12 @@ ${vpnSection}
 /ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment="iCube NAT"
 
 # ── RADIUS ─────────────────────────────────────────────────────
-/radius add service=hotspot,login address=${SERVER_IP} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3000 comment="iCube RADIUS"
+/radius add service=hotspot,login address=$icubeApiIp secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3000 comment="iCube RADIUS"
 /radius incoming add accept=yes port=3799
 
 # ── API & Security ─────────────────────────────────────────────
 ${apiUserScript}
-/ip service set api address=10.99.0.0/24,${SERVER_IP}/32 disabled=no port=8728
+/ip service set api address=("10.99.0.0/24," . $icubeApiCidr) disabled=no port=8728
 /ip service disable telnet,ftp,www,ssh
 ${isL009 ? `
 # ── L009 Hardware Offloading ───────────────────────────────────

@@ -6,6 +6,28 @@ const { detectRouterTier } = require('../routers/router-intelligence');
 
 const SERVER_IP = process.env.API_PUBLIC_HOST || 'web.icubeug.net';
 
+function routerOsPrelude() {
+  return `:local icubeApiHost "${SERVER_IP}"
+:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiCidr ($icubeApiIp . "/32")
+`;
+}
+
+function buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp }) {
+  return `:local rosver [/system resource get version]
+:local rosMajor [:tonum [:pick $rosver 0 [:find $rosver "."]]]
+:if ($rosMajor >= 7) do={
+  :log info "iCube configuring WireGuard VPN"
+  /interface wireguard add name=icube-vpn private-key="${privateKey}" listen-port=13231 comment="iCube VPN v2"
+  /interface wireguard peers add interface=icube-vpn public-key="${serverPubKey}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=("10.99.0.0/24," . $icubeApiCidr) persistent-keepalive=25
+  /ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
+  /ip route add dst-address=$icubeApiCidr gateway=icube-vpn distance=1 comment="iCube Server"
+} else={
+  :log warning ("iCube WireGuard skipped: RouterOS " . $rosver . " does not support /interface wireguard. Upgrade to RouterOS v7 for VPN remote access.")
+}
+`;
+}
+
 function extractBearer(req) {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
@@ -226,6 +248,7 @@ function buildZTPScript(r) {
 # Check RouterOS version
 :local rosver [/system resource get version]
 :log info "iCube ZTP Starting - RouterOS $rosver"
+${routerOsPrelude()}
 :local board [/system resource get board-name]
 :local icubeNetwork "${network}"
 :local icubePrefix "${prefix}"
@@ -255,29 +278,7 @@ function buildZTPScript(r) {
 # ============================================
 # WIREGUARD VPN
 # ============================================
-/interface wireguard add name=icube-vpn \\
-  private-key="${privateKey}" \\
-  listen-port=13231 \\
-  comment="iCube VPN v2"
-
-/interface wireguard peers add \\
-  interface=icube-vpn \\
-  public-key="${serverPubKey}" \\
-  endpoint-address=vpn.icubeug.net \\
-  endpoint-port=${vpnPort} \\
-  allowed-address=10.99.0.0/24,${SERVER_IP}/32 \\
-  persistent-keepalive=25
-
-/ip address add \\
-  address=${peerIp}/24 \\
-  interface=icube-vpn \\
-  comment="iCube VPN IP"
-
-/ip route add \\
-  dst-address=${SERVER_IP}/32 \\
-  gateway=${peerIp} \\
-  distance=1 \\
-  comment="iCube Server"
+${buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp })}
 
 # ============================================
 # DHCP & NETWORK
@@ -314,7 +315,7 @@ function buildZTPScript(r) {
 # ============================================
 /radius add \\
   service=hotspot,login \\
-  address=${SERVER_IP} \\
+  address=$icubeApiIp \\
   secret="${r.radius_secret}" \\
   authentication-port=1812 \\
   accounting-port=1813 \\
@@ -334,7 +335,7 @@ function buildZTPScript(r) {
   login-by=http-chap,http-pap,mac-cookie \\
   mac-auth-mode=mac-as-username \\
   nas-port-type=wireless-802.11 \\
-  login-page=http://${SERVER_IP}/portal/${tenantSlug}
+  login-page=("https://" . $icubeApiHost . "/portal/${tenantSlug}")
 
 /ip hotspot add \\
   name=icube-hotspot \\
@@ -343,16 +344,16 @@ function buildZTPScript(r) {
   address-pool=icube-pool \\
   disabled=no
 
-/ip hotspot walled-garden add dst-host=${SERVER_IP}
+/ip hotspot walled-garden add dst-host=$icubeApiHost
 /ip hotspot walled-garden add dst-host="*.icubeug.net"
-/ip hotspot walled-garden ip add dst-address=${SERVER_IP}/32 action=accept
+/ip hotspot walled-garden ip add dst-address=$icubeApiCidr action=accept
 
 # ============================================
 # API ACCESS
 # ============================================
 ${apiUserScript}
 /ip service set api \\
-  address=10.99.0.0/24,${SERVER_IP}/32 \\
+  address=("10.99.0.0/24," . $icubeApiCidr) \\
   disabled=no \\
   port=8728
 
@@ -367,7 +368,7 @@ ${apiUserScript}
 :local rosver2 [/system resource get version]
 
 /tool fetch \\
-  url="https://${SERVER_IP}/api/v1/router/register" \\
+  url=("https://" . $icubeApiHost . "/api/v1/router/register") \\
   http-method=post \\
   http-header-field="Authorization: Bearer ${bearer}\\r\\nContent-Type: application/json" \\
   http-data="{\\"identity\\":\\"$identity\\",\\"model\\":\\"$model\\",\\"serial\\":\\"$serial\\",\\"ros_version\\":\\"$rosver2\\"}" \\
@@ -379,7 +380,7 @@ ${apiUserScript}
 /system scheduler add \\
   name=icube-heartbeat \\
   interval=5m \\
-  on-event=":local cpu [/system resource get cpu-load];:local mem [/system resource get free-memory];:local totalmem [/system resource get total-memory];:local mempct (100*(\$totalmem-\$mem)/\$totalmem);:local users [/ip hotspot active print count-only];:local uptime [/system resource get uptime];/tool fetch url=\\"https://${SERVER_IP}/api/v1/router/heartbeat\\" http-method=post http-header-field=\\"Authorization: Bearer ${bearer}\\\\r\\\\nContent-Type: application/json\\" http-data=\\"{\\\\\\"cpu_load\\\\\\":$cpu,\\\\\\"memory_used\\\\\\":$mempct,\\\\\\"active_users\\\\\\":$users,\\\\\\"uptime\\\\\\":\\\\\\"$uptime\\\\\\"}\\" output=none" \\
+  on-event=":local icubeApiHost \\"${SERVER_IP}\\";:local cpu [/system resource get cpu-load];:local mem [/system resource get free-memory];:local totalmem [/system resource get total-memory];:local mempct (100*(\$totalmem-\$mem)/\$totalmem);:local users [/ip hotspot active print count-only];:local uptime [/system resource get uptime];/tool fetch url=(\\"https://\\" . \$icubeApiHost . \\"/api/v1/router/heartbeat\\") http-method=post http-header-field=\\"Authorization: Bearer ${bearer}\\\\r\\\\nContent-Type: application/json\\" http-data=\\"{\\\\\\"cpu_load\\\\\\":$cpu,\\\\\\"memory_used\\\\\\":$mempct,\\\\\\"active_users\\\\\\":$users,\\\\\\"uptime\\\\\\":\\\\\\"$uptime\\\\\\"}\\" output=none" \\
   comment="iCube Heartbeat"
 
 :log info "iCube ZTP Complete - Router registered successfully"
@@ -401,9 +402,10 @@ function buildRadiusScript(r) {
 # Router: ${r.name}  Generated: ${now}
 # ============================================
 
+${routerOsPrelude()}
 /radius add \\
   service=hotspot,login \\
-  address=${SERVER_IP} \\
+  address=$icubeApiIp \\
   secret="${r.radius_secret}" \\
   authentication-port=1812 \\
   accounting-port=1813 \\
@@ -412,12 +414,12 @@ function buildRadiusScript(r) {
 
 /radius incoming add accept=yes port=3799
 
-/ip hotspot walled-garden add dst-host=${SERVER_IP}
-/ip hotspot walled-garden ip add dst-address=${SERVER_IP}/32 action=accept
+/ip hotspot walled-garden add dst-host=$icubeApiHost
+/ip hotspot walled-garden ip add dst-address=$icubeApiCidr action=accept
 
 :local identity [/system identity get name]
 /tool fetch \\
-  url="https://${SERVER_IP}/api/v1/router/register" \\
+  url=("https://" . $icubeApiHost . "/api/v1/router/register") \\
   http-method=post \\
   http-header-field="Authorization: Bearer ${bearer}\\r\\nContent-Type: application/json" \\
   http-data="{\\"identity\\":\\"$identity\\"}" \\
@@ -440,33 +442,12 @@ function buildVPNScript(r) {
 # Router: ${r.name}  Port: ${vpnPort}  Generated: ${now}
 # ============================================
 
-/interface wireguard add name=icube-vpn \\
-  private-key="${privateKey}" \\
-  listen-port=13231 \\
-  comment="iCube VPN v2"
-
-/interface wireguard peers add \\
-  interface=icube-vpn \\
-  public-key="${serverPubKey}" \\
-  endpoint-address=vpn.icubeug.net \\
-  endpoint-port=${vpnPort} \\
-  allowed-address=10.99.0.0/24,${SERVER_IP}/32 \\
-  persistent-keepalive=25
-
-/ip address add \\
-  address=${peerIp}/24 \\
-  interface=icube-vpn \\
-  comment="iCube VPN IP"
-
-/ip route add \\
-  dst-address=${SERVER_IP}/32 \\
-  gateway=${peerIp} \\
-  distance=1 \\
-  comment="iCube Server"
+${routerOsPrelude()}
+${buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp })}
 
 :local identity [/system identity get name]
 /tool fetch \\
-  url="https://${SERVER_IP}/api/v1/router/register" \\
+  url=("https://" . $icubeApiHost . "/api/v1/router/register") \\
   http-method=post \\
   http-header-field="Authorization: Bearer ${bearer}\\r\\nContent-Type: application/json" \\
   http-data="{\\"identity\\":\\"$identity\\"}" \\

@@ -498,7 +498,7 @@ function buildCliSteps(p: {
   vpnPort:       string;
   vpnAddress:    string;
 }): { title: string; script: string; verify?: string }[] {
-  const SERVER_IP     = '139.84.247.205';
+  const SERVER_IP     = 'web.icubeug.net';
   const PORTAL_DOMAIN = 'icubeug.net';
 
   return [
@@ -554,13 +554,18 @@ function buildCliSteps(p: {
 # Create hotspot server on LAN interface
 /ip hotspot add name=icube-hotspot interface=${p.lanIface} profile=icube-profile address-pool=icube-pool
 
+# Resolve iCube platform host
+:local icubeApiHost "${SERVER_IP}"
+:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiCidr ($icubeApiIp . "/32")
+
 # Point login page to iCube portal
-/ip hotspot profile set icube-profile login-page=http://${SERVER_IP}/portal/${p.tenantSlug}
+/ip hotspot profile set icube-profile login-page=("https://" . $icubeApiHost . "/portal/${p.tenantSlug}")
 
 # Walled garden — allow access to iCube without login
-/ip hotspot walled-garden add dst-host=${SERVER_IP}
+/ip hotspot walled-garden add dst-host=$icubeApiHost
 /ip hotspot walled-garden add dst-host="*.${PORTAL_DOMAIN}"
-/ip hotspot walled-garden ip add dst-address=${SERVER_IP}/32 action=accept`,
+/ip hotspot walled-garden ip add dst-address=$icubeApiCidr action=accept`,
       verify: `# Check hotspot status
 /ip hotspot print
 # Check walled garden
@@ -568,8 +573,12 @@ function buildCliSteps(p: {
     },
     {
       title: 'RADIUS Configuration',
-      script: `# Add iCube RADIUS server
-/radius add service=hotspot,login address=${SERVER_IP} secret=${p.radiusSecret} authentication-port=1812 accounting-port=1813 timeout=3000 comment="iCube RADIUS"
+      script: `# Resolve iCube platform host
+:local icubeApiHost "${SERVER_IP}"
+:local icubeApiIp [:resolve $icubeApiHost]
+
+# Add iCube RADIUS server
+/radius add service=hotspot,login address=$icubeApiIp secret=${p.radiusSecret} authentication-port=1812 accounting-port=1813 timeout=3000 comment="iCube RADIUS"
 
 # Enable RADIUS CoA (disconnect messages)
 /radius incoming add accept=yes port=3799
@@ -583,18 +592,29 @@ function buildCliSteps(p: {
     },
     {
       title: 'WireGuard VPN',
-      script: `# Create WireGuard interface
-/interface wireguard add name=icube-vpn private-key="${p.wgPrivateKey}" listen-port=13231 comment="iCube VPN"
+      script: `# Resolve iCube platform host
+:local icubeApiHost "${SERVER_IP}"
+:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiCidr ($icubeApiIp . "/32")
+
+# Create WireGuard interface on RouterOS v7+
+:local rosver [/system resource get version]
+:local rosMajor [:tonum [:pick $rosver 0 [:find $rosver "."]]]
+:if ($rosMajor >= 7) do={
+  /interface wireguard add name=icube-vpn private-key="${p.wgPrivateKey}" listen-port=13231 comment="iCube VPN"
 
 # VPN address: ${p.vpnAddress}
 # Add iCube server as peer
-/interface wireguard peers add interface=icube-vpn public-key="${p.wgServerPubKey}" endpoint-address=vpn.icubeug.net endpoint-port=${p.vpnPort} allowed-address=10.99.0.0/24,${SERVER_IP}/32 persistent-keepalive=25 comment="iCube Server"
+  /interface wireguard peers add interface=icube-vpn public-key="${p.wgServerPubKey}" endpoint-address=vpn.icubeug.net endpoint-port=${p.vpnPort} allowed-address=("10.99.0.0/24," . $icubeApiCidr) persistent-keepalive=25 comment="iCube Server"
 
 # Assign VPN IP address
-/ip address add address=${p.wgPeerIp}/24 interface=icube-vpn comment="iCube VPN IP"
+  /ip address add address=${p.wgPeerIp}/24 interface=icube-vpn comment="iCube VPN IP"
 
 # Route to iCube server via VPN
-/ip route add dst-address=${SERVER_IP}/32 gateway=${p.wgPeerIp} comment="iCube Server Route"`,
+  /ip route add dst-address=$icubeApiCidr gateway=icube-vpn comment="iCube Server Route"
+} else={
+  :log warning ("iCube WireGuard skipped: RouterOS " . $rosver . " does not support /interface wireguard. Upgrade to RouterOS v7 for VPN remote access.")
+}`,
       verify: `# Check WireGuard interface
 /interface wireguard print
 # Check VPN peer status
@@ -602,8 +622,13 @@ function buildCliSteps(p: {
     },
     {
       title: 'API Access & Security',
-      script: `# Allow API only from iCube server and VPN subnet
-/ip service set api address=${SERVER_IP}/32,10.99.0.0/24 disabled=no port=8728
+      script: `# Resolve iCube platform host
+:local icubeApiHost "${SERVER_IP}"
+:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiCidr ($icubeApiIp . "/32")
+
+# Allow API only from iCube server and VPN subnet
+/ip service set api address=("10.99.0.0/24," . $icubeApiCidr) disabled=no port=8728
 
 # Disable unused services
 /ip service disable telnet
@@ -614,7 +639,7 @@ function buildCliSteps(p: {
 # Firewall — protect router input chain
 /ip firewall filter add chain=input action=accept connection-state=established,related comment="Allow established"
 /ip firewall filter add chain=input action=accept protocol=icmp comment="Allow ICMP"
-/ip firewall filter add chain=input action=accept src-address=${SERVER_IP} comment="Allow iCube server"
+/ip firewall filter add chain=input action=accept src-address=$icubeApiIp comment="Allow iCube server"
 /ip firewall filter add chain=input action=accept in-interface=icube-vpn comment="Allow VPN"
 /ip firewall filter add chain=input action=drop in-interface=${p.wanIface} comment="Drop WAN input"${p.isL009 ? `
 
