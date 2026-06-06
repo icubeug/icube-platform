@@ -4,7 +4,7 @@ const express = require('express');
 const router  = express.Router();
 const { detectRouterTier } = require('../routers/router-intelligence');
 
-const SERVER_IP = process.env.PLATFORM_DOMAIN || 'web.icubeug.net';
+const SERVER_IP = process.env.API_PUBLIC_HOST || 'web.icubeug.net';
 
 function extractBearer(req) {
   const auth = req.headers.authorization || '';
@@ -208,6 +208,11 @@ function buildZTPScript(r) {
   const bearer       = r.bearer_token;
   const tenantSlug   = r.tenant_slug   || 'default';
   const tenantName   = r.tenant_name   || 'iCube ISP';
+  const apiUsername  = r.api_username  || 'icube-api';
+  const apiPassword  = r.api_password  || '';
+  const apiUserScript = apiPassword
+    ? `:if ([/user print count-only where name="${apiUsername}"] = 0) do={ /user add name="${apiUsername}" password="${apiPassword}" group=full comment="iCube API user" disabled=no } else={ /user set [find name="${apiUsername}"] password="${apiPassword}" group=full disabled=no }`
+    : '# API credentials not stored for this router; add credentials in iCube before live management.';
   const now          = new Date().toISOString();
 
   return `# ============================================
@@ -325,6 +330,7 @@ function buildZTPScript(r) {
 # ============================================
 # API ACCESS
 # ============================================
+${apiUserScript}
 /ip service set api \\
   address=10.99.0.0/24,${SERVER_IP}/32 \\
   disabled=no \\

@@ -5,6 +5,11 @@
 const provider = process.env.SMS_PROVIDER || 'africas_talking';
 
 async function sendSMS(phone, message) {
+  if (provider === 'disabled' || provider === 'none') {
+    console.log(`[SMS disabled] To: ${phone} | Message: ${message}`);
+    return { status: 'disabled', phone, message };
+  }
+
   if (!process.env.SMS_API_KEY) {
     console.log(`[SMS stub] To: ${phone} | Message: ${message}`);
     return { status: 'stub', phone, message };

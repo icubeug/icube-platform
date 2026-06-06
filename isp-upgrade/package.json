@@ -10,7 +10,6 @@
     "test": "jest --coverage"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
     "africastalking": "^0.8.0",
     "axios": "^1.7.0",
     "bcrypt": "^5.1.0",
@@ -21,6 +20,7 @@
     "node-cron": "^3.0.3",
     "node-routeros": "^1.6.0",
     "nodemailer": "^8.0.9",
+    "openai": "^6.42.0",
     "otplib": "^13.4.0",
     "pg": "^8.11.0",
     "qrcode": "^1.5.4",

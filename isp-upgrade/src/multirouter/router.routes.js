@@ -5,6 +5,7 @@ const crypto   = require('crypto');
 const { handleHeartbeat, generateMikrotikScript } = require('../vpn/vpn.service');
 const { provisionRouterPeer, getVpnStatus }       = require('../vpn/wireguard.service');
 const { detectRouterTier, generateZeroTouchScript } = require('../routers/router-intelligence');
+const { getAdapter } = require('./router.factory');
 
 // POST /api/v1/routers/zero-touch — create router without IP (zero-touch onboarding)
 // Available to all authenticated tenants
@@ -20,6 +21,8 @@ router.post('/zero-touch', async (req, res) => {
     const radiusSecret  = 'rs-' + crypto.randomBytes(16).toString('hex');
     const bearerToken   = 'icube_' + crypto.randomBytes(32).toString('hex');
     const installToken  = crypto.randomBytes(32).toString('hex');
+    const apiUsername   = 'icube-api';
+    const apiPassword   = 'ia-' + crypto.randomBytes(18).toString('hex');
 
     // Assign next VPN port (server-wide)
     const [portRow]  = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
@@ -53,7 +56,8 @@ router.post('/zero-touch', async (req, res) => {
          wireguard_peer_ip, wireguard_peer_index,
          subnet_prefix, subnet_mask, network_address, gateway_ip,
          dhcp_pool_start, dhcp_pool_end, max_users, recommended_users, tier_name,
-         model_name, status, bearer_token, install_token)
+         model_name, status, bearer_token, install_token,
+         api_username, api_password)
       VALUES
         ($1,$2,$3,'0.0.0.0','mikrotik',
          $4,$5,$6,
@@ -61,7 +65,8 @@ router.post('/zero-touch', async (req, res) => {
          $9,$10,
          $11,$12,$13,$14,
          $15,$16,$17,$18,$19,
-         $20,'pending',$21,$22)
+         $20,'pending',$21,$22,
+         $23,$24)
       RETURNING *
     `, [
       tid, site_id || null, name,
@@ -71,6 +76,7 @@ router.post('/zero-touch', async (req, res) => {
       tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
       tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users, tier.tier_name,
       model || null, bearerToken, installToken,
+      apiUsername, apiPassword,
     ]);
 
     const newRouter = row;
@@ -82,7 +88,7 @@ router.post('/zero-touch', async (req, res) => {
     const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
     const script = generateZeroTouchScript({
       routerName:    name,
-      routerToken:   newRouter.router_token,
+      routerToken:   newRouter.router_token || bearerToken,
       model:         model || 'Unknown',
       vpnPort,
       privateKey,
@@ -95,10 +101,13 @@ router.post('/zero-touch', async (req, res) => {
       vpnUsername: newRouter.vpn_username || '',
       vpnPassword: newRouter.vpn_password || '',
       ipsecSecret: process.env.VPN_IPSEC_SECRET || 'icube-ipsec-2024',
+      apiUsername,
+      apiPassword,
     });
 
     // Single install command
-    const installCmd = `/tool fetch url="https://${process.env.SERVER_IP||'web.icubeug.net'}/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
+    const apiHost = process.env.API_PUBLIC_HOST || 'web.icubeug.net';
+    const installCmd = `/tool fetch url="https://${apiHost}/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
 
     res.status(201).json({
       router: newRouter,
@@ -111,6 +120,8 @@ router.post('/zero-touch', async (req, res) => {
         vpn_address: vpnAddress,
         peer_ip:     peerIp,
         radius_secret: radiusSecret,
+        api_username: apiUsername,
+        api_password: apiPassword,
         tier: tier.tier_name,
         network: tier.network,
         gateway: tier.gateway,
@@ -130,7 +141,10 @@ router.post('/register', async (req, res) => {
   if (!token) return res.status(400).json({ error: 'token required' });
 
   try {
-    const [r] = await db.query(`SELECT * FROM routers WHERE router_token = $1`, [token]);
+    const [r] = await db.query(
+      `SELECT * FROM routers WHERE router_token::text = $1 OR bearer_token = $1`,
+      [token]
+    );
     if (!r) return res.status(404).json({ error: 'Unknown router token' });
 
     const tier = detectRouterTier(model || r.model_name);
@@ -500,6 +514,54 @@ router.get('/:id/test-connection', async (req, res) => {
       `SELECT * FROM routers WHERE id=$1 AND tenant_id=$2`, [req.params.id, tid]
     );
     if (!r) return res.status(404).json({ error: 'Router not found' });
+
+    const started = Date.now();
+
+    if (r.ip_address && r.ip_address !== '0.0.0.0' && r.api_username && r.api_password) {
+      let adapter;
+      try {
+        adapter = await getAdapter(r);
+        const health = await adapter.getSystemHealth();
+        await db.query(`
+          UPDATE routers SET
+            status = 'online',
+            vpn_connected = true,
+            last_heartbeat_at = COALESCE(last_heartbeat_at, NOW()),
+            cpu_load = $1,
+            memory_used = $2,
+            board_name = COALESCE($3, board_name),
+            firmware_version = COALESCE($4, firmware_version)
+          WHERE id = $5
+        `, [
+          health.cpu_load,
+          health.memory_total ? Math.round(((health.memory_total - health.memory_free) / health.memory_total) * 100) : null,
+          health.board_name || null,
+          health.ros_version || null,
+          r.id,
+        ]);
+
+        return res.json({
+          reachable: true,
+          method: 'routeros-api',
+          latency_ms: Date.now() - started,
+          vpn_connected: true,
+          last_heartbeat_at: r.last_heartbeat_at,
+          health,
+          message: 'RouterOS API connection successful',
+        });
+      } catch (err) {
+        return res.status(502).json({
+          reachable: false,
+          method: 'routeros-api',
+          latency_ms: Date.now() - started,
+          vpn_connected: r.vpn_connected,
+          last_heartbeat_at: r.last_heartbeat_at,
+          message: `RouterOS API connection failed: ${err.message}`,
+        });
+      } finally {
+        if (adapter) await adapter.disconnect().catch(() => {});
+      }
+    }
 
     // Simulate connection test (in production, try SSH/API)
     const online = r.vpn_connected || false;

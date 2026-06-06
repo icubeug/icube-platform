@@ -1,34 +1,47 @@
 // src/services/ai.service.js
-// Calls Anthropic API. Supports both streaming (SSE) and single-shot responses.
+// Calls OpenAI API. Supports both streaming (SSE) and single-shot responses.
 
-const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY, // Set in .env — never hardcode
-});
+const MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
+const MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 1024);
 
-const MODEL = 'claude-sonnet-4-20250514';
-const MAX_TOKENS = 1024;
+let client;
 
-/**
- * streamAIResponse
- *
- * If `res` (Express response) is passed → streams SSE to client.
- * If not → returns the full reply string.
- */
+function getClient() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not configured');
+  }
+  if (!client) client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return client;
+}
+
+function toOpenAIMessages(systemPrompt, messages) {
+  return [
+    { role: 'developer', content: systemPrompt },
+    ...messages
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: String(m.content || ''),
+      }))
+      .filter((m) => m.content.trim()),
+  ];
+}
+
 async function streamAIResponse({ systemPrompt, messages, res }) {
+  const openaiMessages = toOpenAIMessages(systemPrompt, messages);
+
   if (res) {
-    // Streaming mode — pipe SSE events to the HTTP response
-    const stream = await client.messages.stream({
+    const stream = await getClient().chat.completions.create({
       model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: systemPrompt,
-      messages,
+      max_completion_tokens: MAX_TOKENS,
+      messages: openaiMessages,
+      stream: true,
     });
 
     for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-        const chunk = event.delta.text;
+      const chunk = event.choices?.[0]?.delta?.content;
+      if (chunk) {
         res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
       }
     }
@@ -38,15 +51,13 @@ async function streamAIResponse({ systemPrompt, messages, res }) {
     return;
   }
 
-  // Non-streaming mode — return full reply
-  const response = await client.messages.create({
+  const response = await getClient().chat.completions.create({
     model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system: systemPrompt,
-    messages,
+    max_completion_tokens: MAX_TOKENS,
+    messages: openaiMessages,
   });
 
-  return response.content.map(b => b.text || '').join('');
+  return response.choices?.[0]?.message?.content || '';
 }
 
 module.exports = { streamAIResponse };

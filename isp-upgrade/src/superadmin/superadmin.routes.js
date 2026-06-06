@@ -461,6 +461,8 @@ router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (
     const radiusSecret = 'rs-' + crypto.randomBytes(16).toString('hex');
     const bearerToken  = 'icube_' + crypto.randomBytes(32).toString('hex');
     const installToken = crypto.randomBytes(32).toString('hex');
+    const apiUsername  = 'icube-api';
+    const apiPassword  = 'ia-' + crypto.randomBytes(18).toString('hex');
 
     const [portRow] = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
     const vpnPort   = Math.min(parseInt(portRow.next_port, 10), 51920);
@@ -487,30 +489,32 @@ router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (
          wireguard_peer_ip, wireguard_peer_index, subnet_prefix, subnet_mask,
          network_address, gateway_ip, dhcp_pool_start, dhcp_pool_end,
          max_users, recommended_users, tier_name, model_name, status,
-         bearer_token, install_token)
-      VALUES ($1,$2,$3,'0.0.0.0','mikrotik',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'pending',$21,$22)
+         bearer_token, install_token, api_username, api_password)
+      VALUES ($1,$2,$3,'0.0.0.0','mikrotik',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'pending',$21,$22,$23,$24)
       RETURNING *
     `, [tid, site_id||null, name, radiusSecret, vpnPort, vpnAddress,
         privateKey, publicKey, peerIp, peerIdx,
         tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
         tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users,
-        tier.tier_name, model||null, bearerToken, installToken]);
+        tier.tier_name, model||null, bearerToken, installToken, apiUsername, apiPassword]);
 
     const newRouter = row;
     const [tenant]  = await db.query(`SELECT slug, name FROM tenants WHERE id = $1`, [tid]);
     const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
 
     const script = generateZeroTouchScript({
-      routerName: name, routerToken: newRouter.router_token, model: model||'Unknown',
+      routerName: name, routerToken: newRouter.router_token || bearerToken, model: model||'Unknown',
       vpnPort, privateKey, serverPublicKey: serverPubKey, peerIp, radiusSecret,
       tier, tenantSlug: tenant?.slug||'default', vpnType: vpn_type,
       vpnUsername: '', vpnPassword: '', ipsecSecret: process.env.VPN_IPSEC_SECRET||'icube-ipsec-2024',
+      apiUsername, apiPassword,
     });
 
-    const installCmd = `/tool fetch url="https://web.icubeug.net/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
+    const apiHost = process.env.API_PUBLIC_HOST || 'web.icubeug.net';
+    const installCmd = `/tool fetch url="https://${apiHost}/api/v1/router/${tenant?.slug||'default'}/scripts/full/${installToken}" http-header-field="Authorization: Bearer ${bearerToken}" dst-path="icube-setup.rsc" mode=https; :delay 2s; /import file-name="icube-setup.rsc"; :delay 1s; /file remove "icube-setup.rsc"`;
 
     res.status(201).json({ router: newRouter, script, install_command: installCmd, bearer_token: bearerToken, install_token: installToken,
-      config: { vpn_port: vpnPort, vpn_address: vpnAddress, tier: tier.tier_name, network: tier.network, gateway: tier.gateway, max_users: tier.max_users } });
+      config: { vpn_port: vpnPort, vpn_address: vpnAddress, api_username: apiUsername, api_password: apiPassword, tier: tier.tier_name, network: tier.network, gateway: tier.gateway, max_users: tier.max_users } });
   } catch (err) {
     console.error('[SA ZTP]', err.message);
     res.status(500).json({ error: err.message });

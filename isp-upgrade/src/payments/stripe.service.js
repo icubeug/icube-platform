@@ -3,7 +3,16 @@
 // Works alongside existing MTN/Airtel mobile money.
 
 const Stripe = require('stripe');
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+let stripe;
+
+function getStripe() {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    throw new Error('Stripe is not configured');
+  }
+  if (!stripe) stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  return stripe;
+}
 
 // ── Create a payment intent (called before checkout) ─────────────────────────
 async function createPaymentIntent(db, { tenant_id, package_id, customer_phone, customer_email }) {
@@ -18,7 +27,7 @@ async function createPaymentIntent(db, { tenant_id, package_id, customer_phone, 
   const ugx_amount = Number(pkg.price_ugx);
   const usd_cents  = Math.round(ugx_amount / 38);  // ~3800 UGX/USD; update rate regularly
 
-  const intent = await stripe.paymentIntents.create({
+  const intent = await getStripe().paymentIntents.create({
     amount: usd_cents,
     currency: 'usd',
     metadata: {
@@ -44,9 +53,13 @@ async function createPaymentIntent(db, { tenant_id, package_id, customer_phone, 
 // ── Handle Stripe webhook (payment confirmed) ─────────────────────────────────
 // Mount at POST /api/webhooks/stripe — must use raw body parser
 async function handleWebhook(db, redis, rawBody, signature) {
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    throw new Error('Stripe webhooks are not configured');
+  }
+
   let event;
   try {
-    event = stripe.webhooks.constructEvent(
+    event = getStripe().webhooks.constructEvent(
       rawBody,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET

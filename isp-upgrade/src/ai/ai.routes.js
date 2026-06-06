@@ -3,10 +3,31 @@
 
 const express = require('express');
 const router  = express.Router();
-const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 const jwt = require('jsonwebtoken');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
+const MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || 1024);
+
+let client;
+
+function getClient() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not configured');
+  }
+  if (!client) client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return client;
+}
+
+function toOpenAIMessages(systemPrompt, messages) {
+  return [
+    { role: 'developer', content: systemPrompt },
+    ...messages.map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: String(m.content || ''),
+    })).filter((m) => m.content.trim()),
+  ];
+}
 
 // ── Auth helper — extract tenant_id + admin_id from Bearer token ──────────────
 function extractAuth(req) {
@@ -94,28 +115,28 @@ router.post('/query', async (req, res) => {
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
 
-      const stream = await client.messages.stream({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages,
+      const stream = await getClient().chat.completions.create({
+        model: MODEL,
+        max_completion_tokens: MAX_TOKENS,
+        messages: toOpenAIMessages(systemPrompt, messages),
+        stream: true,
       });
 
       for await (const chunk of stream) {
-        if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
-          res.write(`data: ${JSON.stringify({ text: chunk.delta.text })}\n\n`);
+        const text = chunk.choices?.[0]?.delta?.content;
+        if (text) {
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
         }
       }
       res.write('data: [DONE]\n\n');
       res.end();
     } else {
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages,
+      const response = await getClient().chat.completions.create({
+        model: MODEL,
+        max_completion_tokens: MAX_TOKENS,
+        messages: toOpenAIMessages(systemPrompt, messages),
       });
-      res.json({ reply: response.content[0].text, timestamp: new Date().toISOString() });
+      res.json({ reply: response.choices?.[0]?.message?.content || '', timestamp: new Date().toISOString() });
     }
   } catch (err) {
     console.error('[AI /query error]', err.message);
@@ -141,17 +162,18 @@ router.post('/chat', async (req, res) => {
 
     let fullText = '';
 
-    const stream = await client.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      system: systemPrompt,
-      messages: messages.slice(-20).map(m => ({ role: m.role, content: m.content })),
+    const stream = await getClient().chat.completions.create({
+      model: MODEL,
+      max_completion_tokens: Number(process.env.OPENAI_CHAT_MAX_TOKENS || 2048),
+      messages: toOpenAIMessages(systemPrompt, messages.slice(-20)),
+      stream: true,
     });
 
     for await (const chunk of stream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
-        fullText += chunk.delta.text;
-        res.write(`data: ${JSON.stringify({ text: chunk.delta.text })}\n\n`);
+      const text = chunk.choices?.[0]?.delta?.content;
+      if (text) {
+        fullText += text;
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
       }
     }
     res.write('data: [DONE]\n\n');

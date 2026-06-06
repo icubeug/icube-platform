@@ -6,7 +6,7 @@ import {
   Copy, Download, ChevronRight, ChevronLeft, ChevronDown, Loader,
   AlertCircle, Eye, EyeOff, Circle, Search, X, Info,
 } from 'lucide-react';
-import { TENANT_ID } from '@/lib/api';
+import { getTenantId } from '@/lib/api';
 
 // ── MikroTik model data ────────────────────────────────────────────────────────
 const TIER_COLORS = ['#6b7280','#2563eb','#f59e0b','#f97316','#ef4444'];
@@ -717,7 +717,8 @@ function RouterSetupWizardInner() {
   }
 
   useEffect(() => {
-    fetch('/api/v1/settings/routers', { headers: { 'X-Tenant-ID': TENANT_ID } })
+    const headers = { 'X-Tenant-ID': getTenantId() };
+    fetch('/api/v1/settings/routers', { headers })
       .then(r => r.json())
       .then(d => setRouters(Array.isArray(d) ? d : []))
       .catch(() => {});
@@ -725,7 +726,8 @@ function RouterSetupWizardInner() {
 
   useEffect(() => {
     if (!selectedId) return;
-    fetch(`/api/v1/routers/${selectedId}/setup`, { headers: { 'X-Tenant-ID': TENANT_ID } })
+    const headers = { 'X-Tenant-ID': getTenantId() };
+    fetch(`/api/v1/routers/${selectedId}/setup`, { headers })
       .then(r => r.json())
       .then(d => {
         setRouter(d.router);
@@ -749,7 +751,7 @@ function RouterSetupWizardInner() {
     try {
       const res = await fetch(`/api/v1/routers/${selectedId}/setup`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': TENANT_ID },
+        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': getTenantId() },
         body: JSON.stringify({
           wan_interface:   netConfig.wan_interface,
           lan_interface:   netConfig.lan_interface,
@@ -770,7 +772,7 @@ function RouterSetupWizardInner() {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
       setScript(d.script);
-      const r2 = await fetch(`/api/v1/routers/${selectedId}/setup`, { headers: { 'X-Tenant-ID': TENANT_ID } });
+      const r2 = await fetch(`/api/v1/routers/${selectedId}/setup`, { headers: { 'X-Tenant-ID': getTenantId() } });
       const d2 = await r2.json();
       setRouter(d2.router);
       setStep(4);
@@ -783,14 +785,14 @@ function RouterSetupWizardInner() {
 
   async function testConnection() {
     setTesting(true); setTestResult(null);
-    const res = await fetch(`/api/v1/routers/${selectedId}/test-connection`, { headers: { 'X-Tenant-ID': TENANT_ID } });
+    const res = await fetch(`/api/v1/routers/${selectedId}/test-connection`, { headers: { 'X-Tenant-ID': getTenantId() } });
     setTestResult(await res.json());
     setTesting(false);
   }
 
   async function markComplete() {
     await fetch(`/api/v1/routers/${selectedId}/setup/complete`, {
-      method: 'PATCH', headers: { 'X-Tenant-ID': TENANT_ID },
+      method: 'PATCH', headers: { 'X-Tenant-ID': getTenantId() },
     }).catch(() => {});
     setStep(5);
   }

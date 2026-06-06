@@ -162,6 +162,9 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
   const modelName    = model?.name    || 'Custom';
   const timestamp    = new Date().toISOString();
   const tenant       = tenantName || 'iCube ISP';
+  const apiUserScript = router.api_username && router.api_password
+    ? `:if ([/user print count-only where name="${router.api_username}"] = 0) do={ /user add name="${router.api_username}" password="${router.api_password}" group=full comment="iCube API user" disabled=no } else={ /user set [find name="${router.api_username}"] password="${router.api_password}" group=full disabled=no }`
+    : '# API credentials not stored for this router; add credentials in iCube before live management.';
 
   return `# iCube Platform — MikroTik Setup Script
 # Router:    ${router.name}
@@ -185,6 +188,7 @@ ${wgPrivKey ? `/interface wireguard add name=icube-vpn private-key="${wgPrivKey}
 /ip route add dst-address=${serverIp}/32 gateway=${wgPeerIp} comment="iCube Server Route"` : '# WireGuard not provisioned yet'}
 ${isL009 ? '/interface ethernet set [find] l2mtu=1598\n/interface bridge set [find] fast-forward=yes' : ''}
 /ip service set api address=${serverIp}/32 disabled=no port=8728
+${apiUserScript}
 /ip service disable telnet,ftp,www,ssh
 :log info "iCube setup complete for ${router.name}"
 `;

@@ -55,11 +55,15 @@ function generateZeroTouchScript({
   peerIp, radiusSecret, tier, tenantSlug,
   vpnType = 'wireguard', // 'wireguard' | 'l2tp'
   vpnUsername = '', vpnPassword = '', ipsecSecret = 'icube-ipsec-2024',
+  apiUsername = 'icube-api', apiPassword = '',
 }) {
-  const SERVER_IP = process.env.PLATFORM_DOMAIN || 'web.icubeug.net';
+  const SERVER_IP = process.env.API_PUBLIC_HOST || 'web.icubeug.net';
   const t         = tier || ROUTER_TIERS.tier1;
   const isL009    = model && /L009/i.test(model);
   const useL2TP   = vpnType === 'l2tp';
+  const apiUserScript = apiPassword
+    ? `:if ([/user print count-only where name="${apiUsername}"] = 0) do={ /user add name="${apiUsername}" password="${apiPassword}" group=full comment="iCube API user" disabled=no } else={ /user set [find name="${apiUsername}"] password="${apiPassword}" group=full disabled=no }`
+    : '# API credentials not stored for this router; add credentials in iCube before live management.';
 
   // ── RouterOS version check block ──────────────────────────────────────────
   const rosVersionCheck = `# ============================================
@@ -126,6 +130,7 @@ ${vpnSection}
 /radius incoming add accept=yes port=3799
 
 # ── API & Security ─────────────────────────────────────────────
+${apiUserScript}
 /ip service set api address=10.99.0.0/24,${SERVER_IP}/32 disabled=no port=8728
 /ip service disable telnet,ftp,www,ssh
 ${isL009 ? `
