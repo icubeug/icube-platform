@@ -556,7 +556,8 @@ function buildCliSteps(p: {
 
 # Resolve iCube platform host
 :local icubeApiHost "${SERVER_IP}"
-:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiIp ""
+:do { :set icubeApiIp [:resolve $icubeApiHost] } on-error={ :log error ("iCube could not resolve " . $icubeApiHost); :error ("iCube DNS resolve failed for " . $icubeApiHost) }
 :local icubeApiCidr ($icubeApiIp . "/32")
 
 # Point login page to iCube portal
@@ -575,13 +576,15 @@ function buildCliSteps(p: {
       title: 'RADIUS Configuration',
       script: `# Resolve iCube platform host
 :local icubeApiHost "${SERVER_IP}"
-:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiIp ""
+:do { :set icubeApiIp [:resolve $icubeApiHost] } on-error={ :log error ("iCube could not resolve " . $icubeApiHost); :error ("iCube DNS resolve failed for " . $icubeApiHost) }
 
 # Add iCube RADIUS server
-/radius add service=hotspot,login address=$icubeApiIp secret=${p.radiusSecret} authentication-port=1812 accounting-port=1813 timeout=3000 comment="iCube RADIUS"
+:do { /radius remove [find comment="iCube RADIUS"] } on-error={}
+/radius add service=hotspot,login address=$icubeApiIp secret="${p.radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s comment="iCube RADIUS"
 
 # Enable RADIUS CoA (disconnect messages)
-/radius incoming add accept=yes port=3799
+:do { /radius incoming set accept=yes port=3799 } on-error={ :log warning "iCube could not enable RADIUS incoming CoA on this RouterOS version" }
 
 # Apply RADIUS to hotspot profile
 /ip hotspot profile set icube-profile use-radius=yes radius-accounting=yes`,
@@ -594,7 +597,8 @@ function buildCliSteps(p: {
       title: 'WireGuard VPN',
       script: `# Resolve iCube platform host
 :local icubeApiHost "${SERVER_IP}"
-:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiIp ""
+:do { :set icubeApiIp [:resolve $icubeApiHost] } on-error={ :log error ("iCube could not resolve " . $icubeApiHost); :error ("iCube DNS resolve failed for " . $icubeApiHost) }
 :local icubeApiCidr ($icubeApiIp . "/32")
 
 # Create WireGuard interface on RouterOS v7+
@@ -624,7 +628,8 @@ function buildCliSteps(p: {
       title: 'API Access & Security',
       script: `# Resolve iCube platform host
 :local icubeApiHost "${SERVER_IP}"
-:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiIp ""
+:do { :set icubeApiIp [:resolve $icubeApiHost] } on-error={ :log error ("iCube could not resolve " . $icubeApiHost); :error ("iCube DNS resolve failed for " . $icubeApiHost) }
 :local icubeApiCidr ($icubeApiIp . "/32")
 
 # Allow API only from iCube server and VPN subnet

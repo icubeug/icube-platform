@@ -172,7 +172,8 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
 # Tenant:    ${tenant}
 # Generated: ${timestamp}
 :local icubeApiHost "${serverIp}"
-:local icubeApiIp [:resolve $icubeApiHost]
+:local icubeApiIp ""
+:do { :set icubeApiIp [:resolve $icubeApiHost] } on-error={ :log error ("iCube could not resolve " . $icubeApiHost); :error ("iCube DNS resolve failed for " . $icubeApiHost) }
 :local icubeApiCidr ($icubeApiIp . "/32")
 /system identity set name="${router.name}"
 /system clock set time-zone-name=Africa/Kampala
@@ -183,8 +184,9 @@ function generateMikrotikScript({ router, config, platformSettings, model, tier,
 /ip dhcp-server network add address=${networkBase}/${prefix} gateway=${gw} dns-server=${dns_servers}
 /ip dns set servers=${dns_servers} allow-remote-requests=yes
 /ip firewall nat add chain=srcnat out-interface=${wan_interface} action=masquerade comment="iCube NAT"
-/radius add service=hotspot,login address=$icubeApiIp secret="${router.radius_secret || 'MISSING'}" authentication-port=1812 accounting-port=1813 timeout=3000
-/radius incoming add accept=yes port=3799
+:do { /radius remove [find comment="iCube RADIUS"] } on-error={}
+/radius add service=hotspot,login address=$icubeApiIp secret="${router.radius_secret || 'MISSING'}" authentication-port=1812 accounting-port=1813 timeout=3s comment="iCube RADIUS"
+:do { /radius incoming set accept=yes port=3799 } on-error={ :log warning "iCube could not enable RADIUS incoming CoA on this RouterOS version" }
 ${wgPrivKey ? `:local rosver [/system resource get version]
 :local rosMajor [:tonum [:pick $rosver 0 [:find $rosver "."]]]
 :if ($rosMajor >= 7) do={
