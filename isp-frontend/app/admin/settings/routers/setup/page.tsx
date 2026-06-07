@@ -8,6 +8,9 @@ import {
 } from 'lucide-react';
 import { getTenantId } from '@/lib/api';
 
+const WIREGUARD_SERVER_PORT = '51820';
+const PUBLIC_WINBOX_FALLBACK = 'vpn.icubeug.net:32600';
+
 // ── MikroTik model data ────────────────────────────────────────────────────────
 const TIER_COLORS = ['#6b7280','#2563eb','#f59e0b','#f97316','#ef4444'];
 const TIER_LABELS = ['','SOHO','Medium','Large','Enterprise','Carrier'];
@@ -850,8 +853,8 @@ function RouterSetupWizardInner() {
       wgPeerIp:       router?.wg_peer_ip    || router?.vpn_peer_ip    || '[PEER-IP-FROM-SERVER]',
       tenantSlug,
       isL009:         (selModel as any)?.is_l009 || false,
-      vpnPort:        String(router?.vpn_port  || 51820),
-      vpnAddress:     router?.vpn_address || 'vpn.icubeug.net:51820',
+      vpnPort:        WIREGUARD_SERVER_PORT,
+      vpnAddress:     router?.vpn_address || PUBLIC_WINBOX_FALLBACK,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, netConfig, selModel, step]);

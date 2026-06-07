@@ -326,10 +326,10 @@ export const api = {
   },
 
   vouchers: {
-    list: (params?: { status?: string; site_id?: string; page?: number; per_page?: number }) => {
+    list: (params?: { status?: string; site_id?: string; limit?: number; offset?: number; page?: number; per_page?: number }) => {
       return req<Voucher[]>(`/vouchers${qs(params ?? {})}`);
     },
-    generate: (data: { package_id: string; site_id: string; count?: number; note?: string }) =>
+    generate: (data: { package_id: string; site_id: string; count?: number; note?: string; use_case?: string; format?: string; length?: number; prefix?: string; expires_at?: string }) =>
       req<{ generated: number; vouchers: { id: string; code: string }[] }>(
         '/vouchers/generate', { method: 'POST', body: JSON.stringify(data) }
       ),

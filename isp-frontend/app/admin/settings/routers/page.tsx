@@ -154,13 +154,13 @@ export default function RouterOSSettingsPage() {
       cmd: `/tool fetch url="${base}/radius/${installTok}" http-header-field="Authorization: Bearer ${bearer}" dst-path="radius-install.rsc" mode=https; :delay 2s; /import file-name="radius-install.rsc"; :delay 1s; /file remove "radius-install.rsc"`,
     },
     {
-      title: 'VPN Setup',
+      title: 'Remote Winbox Setup',
       badges: [
-        { label: 'VPN',   bg: '#0d1a2e',  color: '#2563eb' },
+        { label: 'Remote Access', bg: '#0d1a2e',  color: '#2563eb' },
         { label: 'Ready', bg: '#052e16',  color: '#22c55e' },
       ],
-      description: 'Configure WireGuard VPN client connection to iCube servers.',
-      cmd: `/tool fetch url="${base}/vpn/${installTok}" http-header-field="Authorization: Bearer ${bearer}" dst-path="vpn.rsc" mode=https; :delay 2s; /import file-name="vpn.rsc"; :delay 1s; /file remove "vpn.rsc"`,
+      description: 'Install the same Remote Winbox Access configuration used by the Remote Access page.',
+      cmd: `/tool fetch url="${base}/vpn/${installTok}" http-header-field="Authorization: Bearer ${bearer}" dst-path="icube-remote-access.rsc" mode=https; :delay 2s; /import file-name="icube-remote-access.rsc"; :delay 1s; /file remove "icube-remote-access.rsc"`,
     },
     {
       title: 'Full Router Setup',

@@ -75,6 +75,8 @@ function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 type MainTab = 'admin' | 'system' | 'trash';
+const VOUCHERS_PER_PAGE = 50;
+const MAX_GENERATE_QTY = 500;
 
 export default function VouchersPage() {
   const [tab, setTab] = useState<MainTab>('admin');
@@ -91,6 +93,8 @@ export default function VouchersPage() {
   const [toast, setToast] = useState('');
   const [settings, setSettings] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
+  const [page, setPage] = useState(1);
+  const [downloadRows, setDownloadRows] = useState<Voucher[]>([]);
 
   // Generate form state
   const [genPackageId,  setGenPackageId]  = useState('');
@@ -106,7 +110,7 @@ export default function VouchersPage() {
     setLoading(true); setError('');
     try {
       const [v, pkgsRaw, s, general] = await Promise.all([
-        api.vouchers.list(),
+        api.vouchers.list({ limit: 1000 }),
         api.packages.list({ per_page: 100 }) as Promise<any>,
         api.sites.list(),
         api.settings.getGeneral().catch(() => null),
@@ -134,6 +138,7 @@ export default function VouchersPage() {
         site_id:    genSiteId,
         count:      genQuantity,
         note:       genNote || undefined,
+        use_case:   genChannel === 'system' ? 'mobile_money_sale' : 'admin_sale',
       });
       setGenResult({ generated: res.generated, codes: res.vouchers.map(v => v.code) });
       loadData();
@@ -204,6 +209,14 @@ export default function VouchersPage() {
     setToast(`Downloaded ${rows.length} voucher${rows.length === 1 ? '' : 's'}`);
   }
 
+  function openDownloadReview(rows: Voucher[]) {
+    if (!rows.length) {
+      setToast('No vouchers selected');
+      return;
+    }
+    setDownloadRows(rows);
+  }
+
   // Filter by tab
   const tabFiltered = (() => {
     if (tab === 'trash') return trashVouchers;
@@ -223,6 +236,13 @@ export default function VouchersPage() {
     return true;
   });
   const selectedRows = filtered.filter(v => selectedIds[v.id]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / VOUCHERS_PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = filtered.slice((safePage - 1) * VOUCHERS_PER_PAGE, safePage * VOUCHERS_PER_PAGE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab, search, fromDate, toDate]);
 
   const TABS: { key: MainTab; label: string }[] = [
     { key: 'admin', label: 'Created by Admin' },
@@ -283,12 +303,12 @@ export default function VouchersPage() {
           <Plus size={13} /> Generate
         </button>
 
-        <button onClick={() => downloadPdf(selectedRows.length ? selectedRows : filtered, 'icube-voucher-sheet.pdf')} style={{
+        <button onClick={() => openDownloadReview(selectedRows.length ? selectedRows : pageRows)} style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: '#131313', border: '1px solid #2a2a2a', color: '#aaa',
           borderRadius: 8, fontSize: 12, padding: '7px 12px', cursor: 'pointer',
         }}>
-          <Download size={12} /> Download PDF
+          <Download size={12} /> Review & Download PDF
         </button>
 
         <button onClick={exportCSV} style={{
@@ -356,7 +376,7 @@ export default function VouchersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(v => (
+                {pageRows.map(v => (
                   <tr key={v.id} style={{ borderBottom: '1px solid #1e1e1e' }}
                     onMouseEnter={e => (e.currentTarget.style.background = '#1e1e1e')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
@@ -403,9 +423,95 @@ export default function VouchersPage() {
                 ))}
               </tbody>
             </table>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 14px', borderTop: '1px solid #222', color: '#777', fontSize: 12,
+              flexWrap: 'wrap', gap: 10,
+            }}>
+              <span>
+                Showing {(safePage - 1) * VOUCHERS_PER_PAGE + 1}-{Math.min(safePage * VOUCHERS_PER_PAGE, filtered.length)} of {filtered.length} vouchers
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  style={{ background: '#111', border: '1px solid #2a2a2a', color: '#aaa', borderRadius: 7, padding: '6px 10px', cursor: safePage === 1 ? 'not-allowed' : 'pointer', opacity: safePage === 1 ? 0.45 : 1 }}
+                >
+                  Previous
+                </button>
+                <span>Page {safePage} of {totalPages}</span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  style={{ background: '#111', border: '1px solid #2a2a2a', color: '#aaa', borderRadius: 7, padding: '6px 10px', cursor: safePage === totalPages ? 'not-allowed' : 'pointer', opacity: safePage === totalPages ? 0.45 : 1 }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
+
+      {downloadRows.length > 0 && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9100,
+        }}>
+          <div style={{
+            background: '#131313', border: '1px solid #222', borderRadius: 14,
+            width: 680, maxWidth: '95vw', maxHeight: '88vh', padding: 22,
+            display: 'flex', flexDirection: 'column',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 14 }}>
+              <div>
+                <div style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>Review Vouchers to Download</div>
+                <div style={{ color: '#777', fontSize: 12, marginTop: 4 }}>
+                  {downloadRows.length} voucher{downloadRows.length === 1 ? '' : 's'} will be printed in this PDF.
+                </div>
+              </div>
+              <button onClick={() => setDownloadRows([])} style={{ background: 'none', border: 'none', color: '#777', cursor: 'pointer' }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{
+              background: '#0a0a0a', border: '1px solid #1f1f1f', borderRadius: 10,
+              overflow: 'auto', minHeight: 180, maxHeight: 380,
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #222' }}>
+                    {['Voucher Code', 'Package', 'Hotspot', 'Validity', 'Status'].map(h => (
+                      <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#666', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {downloadRows.map(v => (
+                    <tr key={v.id} style={{ borderBottom: '1px solid #171717' }}>
+                      <td style={{ padding: '9px 12px', color: '#2563eb', fontFamily: 'monospace', fontSize: 12 }}>{v.code}</td>
+                      <td style={{ padding: '9px 12px', color: '#aaa', fontSize: 12 }}>{v.package_name || 'WiFi Voucher'}</td>
+                      <td style={{ padding: '9px 12px', color: '#888', fontSize: 12 }}>{v.site_name || settings?.login_page_name || 'iCube Hotspot'}</td>
+                      <td style={{ padding: '9px 12px', color: '#888', fontSize: 12 }}>{voucherValidity(v)}</td>
+                      <td style={{ padding: '9px 12px' }}><StatusBadge status={v.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <button onClick={() => setDownloadRows([])} style={{ background: '#111', border: '1px solid #2a2a2a', color: '#aaa', borderRadius: 8, padding: '9px 14px', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={() => { downloadPdf(downloadRows, 'icube-voucher-sheet.pdf'); setDownloadRows([]); }} style={{ background: '#2563eb', border: 'none', color: '#fff', borderRadius: 8, padding: '9px 14px', cursor: 'pointer', fontWeight: 600 }}>
+                Download PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Generate Modal */}
       {generateOpen && (
@@ -494,10 +600,10 @@ export default function VouchersPage() {
               </div>
 
               <div>
-                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Quantity (1–100)</label>
+                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 6 }}>Quantity (1-500)</label>
                 <input
-                  type="number" min={1} max={100} value={genQuantity}
-                  onChange={e => setGenQuantity(Number(e.target.value))}
+                  type="number" min={1} max={MAX_GENERATE_QTY} value={genQuantity}
+                  onChange={e => setGenQuantity(Math.max(1, Math.min(MAX_GENERATE_QTY, Number(e.target.value) || 1)))}
                   style={{
                     width: '100%', background: '#111', border: '1px solid #2a2a2a',
                     borderRadius: 8, padding: '8px 12px', color: '#aaa', fontSize: 13, outline: 'none',
