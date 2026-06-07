@@ -35,6 +35,7 @@ export interface Router {
   gateway_ip: string | null; dhcp_pool_start: string | null; dhcp_pool_end: string | null;
   subnet_prefix: number; wan_ip: string | null;
   router_token: string | null; wireguard_peer_ip: string | null;
+  bearer_token?: string | null; install_token?: string | null; install_token_used?: boolean;
 }
 
 export interface RouterHeartbeat {
@@ -109,6 +110,7 @@ export interface Voucher {
   package_name: string | null; site_name: string | null; expires_at: string | null;
   customer_phone: string | null; created_at: string; use_case: string | null;
   note: string | null; first_login_at: string | null; deleted_at: string | null;
+  duration_hrs?: number | null; price_ugx?: number | null;
 }
 export interface Payment {
   id: string; amount_ugx: number; method: string; status: string;
@@ -317,6 +319,8 @@ export const api = {
       req<Router>(`/routers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     metrics:   (id: string, range = '1h') => req<RouterMetrics>(`/routers/${id}/metrics?range=${range}`),
     analytics: (id: string) => req<RouterAnalytics>(`/routers/${id}/analytics`),
+    testConnection: (id: string) =>
+      req<{ ok: boolean; success?: boolean; message: string; router?: Router }>(`/routers/${id}/test-connection`),
     zeroTouch: (data: { name: string; model?: string; site_id?: string; vpn_type?: string }) =>
       req<ZeroTouchResult>('/routers/zero-touch', { method: 'POST', body: JSON.stringify(data) }),
   },
@@ -445,6 +449,9 @@ export const api = {
     getSms: () => req<SmsSettings>('/settings/sms'),
     putSms: (data: Partial<SmsSettings>) =>
       req<SmsSettings>('/settings/sms', { method: 'PUT', body: JSON.stringify(data) }),
+    getPortalTemplate: () => req<{ portal_template: string; portal_theme: string }>('/settings/portal-template'),
+    putPortalTemplate: (data: { portal_template: string; portal_theme?: string }) =>
+      req<{ ok: boolean; portal_template: string; portal_theme: string }>('/settings/portal-template', { method: 'PUT', body: JSON.stringify(data) }),
   },
 
   features: {

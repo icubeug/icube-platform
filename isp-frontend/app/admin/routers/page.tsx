@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api, Router, Site, RouterRequest } from '@/lib/api';
 import { Router as RouterIcon, Plus, AlertCircle, RefreshCw, Server, Circle,
-         Mail, ChevronRight, Clock, Check, X } from 'lucide-react';
+         Mail, ChevronRight, Check, X, Terminal, BarChart3, Wifi } from 'lucide-react';
 
 function timeAgo(d: string | null): string {
   if (!d) return 'Never';
@@ -141,6 +141,15 @@ export default function RoutersPage() {
     pending: '#f59e0b', in_progress: '#2563eb', completed: '#22c55e', cancelled: '#555',
   };
 
+  async function testRouter(id: string) {
+    try {
+      await api.routers.testConnection(id);
+      load();
+    } catch (e: any) {
+      setError(e.message || 'Router test failed');
+    }
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#0f0f0f', padding: '24px 28px' }}>
 
@@ -259,7 +268,7 @@ export default function RoutersPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#0f0f0f' }}>
-                  {['Router', 'VPN Address', 'Status', 'CPU', 'Active Users', 'Tier', 'Last Seen'].map(h => (
+                  {['Router', 'VPN Address', 'Status', 'CPU', 'Active Users', 'Tier', 'Last Seen', 'Actions'].map(h => (
                     <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#444', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid #1e1e1e', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -297,6 +306,14 @@ export default function RoutersPage() {
                     <td style={{ padding: '11px 14px', fontSize: 12, color: '#888' }}>{r.active_users ?? '—'}</td>
                     <td style={{ padding: '11px 14px', fontSize: 11, color: '#555' }}>{r.tier_name || '—'}</td>
                     <td style={{ padding: '11px 14px', fontSize: 11, color: '#555' }}>{timeAgo(r.last_heartbeat_at)}</td>
+                    <td style={{ padding: '11px 14px' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <a href={`/admin/settings/routers/setup?router_id=${r.id}`} title="Setup CLI" style={{ color: '#94a3b8' }}><Terminal size={15} /></a>
+                        <a href={`/admin/remote?router_id=${r.id}`} title="Remote access" style={{ color: '#94a3b8' }}><Wifi size={15} /></a>
+                        <a href={`/admin/router/${r.id}`} title="Analytics" style={{ color: '#94a3b8' }}><BarChart3 size={15} /></a>
+                        <button onClick={() => testRouter(r.id)} title="Test API" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0 }}><RefreshCw size={15} /></button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

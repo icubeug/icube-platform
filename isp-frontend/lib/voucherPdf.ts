@@ -1,4 +1,3 @@
-// Voucher PDF generator — A4 portrait, 4×9 grid (36 per page)
 import { jsPDF } from 'jspdf';
 
 export interface VoucherCard {
@@ -7,265 +6,166 @@ export interface VoucherCard {
   durationHrs: number;
   priceUgx: number;
   expiresAt?: string | null;
+  hotspotName?: string;
+  validity?: string;
+  supportPhones?: string[];
 }
 
 export interface VoucherPdfOptions {
   cards: VoucherCard[];
   businessName?: string;
+  hotspotName?: string;
   domain?: string;
-  brandColor?: string; // hex e.g. '#1a1a2e'
+  supportPhones?: string[];
+  brandColor?: string;
 }
 
-// ── Layout constants (all mm) ──────────────────────────────────────────────────
-const PAGE_W  = 210;
-const PAGE_H  = 297;
-const MARGIN  = 10;
-const COLS    = 4;
-const ROWS    = 9;
-const GAP_H   = 4;  // horizontal gap between columns
-const GAP_V   = 4;  // vertical gap between rows
+const PAGE_W = 210;
+const PAGE_H = 297;
+const MARGIN = 10;
+const COLS = 3;
+const ROWS = 7;
+const GAP = 4;
+const CARD_W = (PAGE_W - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
+const CARD_H = (PAGE_H - MARGIN * 2 - GAP * (ROWS - 1)) / ROWS;
 
-const CARD_W  = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP_H) / COLS;  // 44.5mm
-const CARD_H  = (PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP_V) / ROWS;  // ≈27.2mm
-
-const HDR_H   = 6.5;  // header height
-const ACC_H   = 0.8;  // accent stripe height
-const FTR_H   = 4.5;  // footer height
-const BODY_H  = CARD_H - HDR_H - ACC_H - FTR_H;
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
 function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
+  const clean = hex.replace('#', '').padEnd(6, '0').slice(0, 6);
   return [
-    parseInt(h.substring(0, 2), 16),
-    parseInt(h.substring(2, 4), 16),
-    parseInt(h.substring(4, 6), 16),
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
   ];
 }
 
-function fmtDuration(hrs: number): string {
-  if (!hrs) return '';
-  if (hrs < 1) return '';
-  if (hrs < 24) return `${hrs}HR`;
-  const d = Math.floor(hrs / 24);
-  const h = hrs % 24;
-  return h > 0 ? `${d}D ${h}H` : d === 1 ? '1 DAY' : `${d} DAYS`;
+function durationLabel(hrs: number): string {
+  if (!hrs) return 'Until used';
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'}`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'}`;
 }
 
-function fmtPrice(ugx: number): string {
-  return `UGX ${Number(ugx).toLocaleString('en-UG')}`;
+function priceLabel(ugx: number): string {
+  return ugx ? `UGX ${Number(ugx).toLocaleString('en-UG')}` : '';
 }
 
-// ── Draw dashed cut lines across the full page ─────────────────────────────────
-function drawCutLines(doc: jsPDF): void {
+function fitText(doc: jsPDF, text: string, maxWidth: number, fontSize: number): string {
+  doc.setFontSize(fontSize);
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  let t = text;
+  while (t.length > 4 && doc.getTextWidth(t + '...') > maxWidth) t = t.slice(0, -1);
+  return t + '...';
+}
+
+function drawCutLines(doc: jsPDF) {
   const d = doc as any;
-  d.setLineDash([0.8, 0.8], 0);
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.18);
-  doc.setFontSize(5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(180, 180, 180);
-
-  // 3 vertical cut lines (between 4 columns)
-  for (let c = 0; c < COLS - 1; c++) {
-    const x = MARGIN + (c + 1) * CARD_W + c * GAP_H + GAP_H / 2;
-    doc.line(x, 0, x, PAGE_H);
-    doc.text('✂', x - 0.8, 3.5);
+  d.setLineDash([0.7, 1.1], 0);
+  doc.setDrawColor(210, 210, 210);
+  doc.setLineWidth(0.15);
+  for (let c = 1; c < COLS; c++) {
+    const x = MARGIN + c * CARD_W + (c - 0.5) * GAP;
+    doc.line(x, 4, x, PAGE_H - 4);
   }
-
-  // 8 horizontal cut lines (between 9 rows)
-  for (let r = 0; r < ROWS - 1; r++) {
-    const y = MARGIN + (r + 1) * CARD_H + r * GAP_V + GAP_V / 2;
-    doc.line(0, y, PAGE_W, y);
-    doc.text('✂', 1.5, y + 0.8);
+  for (let r = 1; r < ROWS; r++) {
+    const y = MARGIN + r * CARD_H + (r - 0.5) * GAP;
+    doc.line(4, y, PAGE_W - 4, y);
   }
-
   d.setLineDash([], 0);
 }
 
-// ── Draw one voucher card ──────────────────────────────────────────────────────
 function drawCard(
   doc: jsPDF,
   x: number,
   y: number,
   idx: number,
   card: VoucherCard,
-  businessName: string,
-  domain: string,
-  brandRgb: [number, number, number],
-): void {
-  const W = CARD_W;
-  const H = CARD_H;
-  const serial = `#${String(idx + 1).padStart(3, '0')}`;
-  const durationLabel = fmtDuration(card.durationHrs);
-  const priceLabel = fmtPrice(card.priceUgx);
+  opts: Required<Pick<VoucherPdfOptions, 'businessName' | 'hotspotName' | 'domain' | 'supportPhones' | 'brandColor'>>,
+) {
+  const [br, bg, bb] = hexToRgb(opts.brandColor);
+  const hotspot = fitText(doc, card.hotspotName || opts.hotspotName, CARD_W - 8, 9);
+  const pkg = fitText(doc, card.packageName || 'WiFi Package', CARD_W - 10, 7);
+  const validity = card.validity || durationLabel(card.durationHrs);
+  const support = (card.supportPhones?.length ? card.supportPhones : opts.supportPhones).filter(Boolean).join(' / ');
+  const price = priceLabel(card.priceUgx);
 
-  // ── Card base: white rounded rect ──
   doc.setFillColor(255, 255, 255);
-  doc.roundedRect(x, y, W, H, 1.5, 1.5, 'F');
+  doc.roundedRect(x, y, CARD_W, CARD_H, 2, 2, 'F');
+  doc.setDrawColor(218, 224, 235);
+  doc.roundedRect(x, y, CARD_W, CARD_H, 2, 2, 'S');
 
-  // ── Header: brand-color background ──
-  // Draw brand-colored full rounded rect first (gets top rounded corners)
-  doc.setFillColor(brandRgb[0], brandRgb[1], brandRgb[2]);
-  doc.roundedRect(x, y, W, HDR_H + 2, 1.5, 1.5, 'F');
-  // Square off the bottom of the header
-  doc.rect(x, y + HDR_H - 0.5, W, 3, 'F');
+  doc.setFillColor(br, bg, bb);
+  doc.roundedRect(x, y, CARD_W, 11, 2, 2, 'F');
+  doc.rect(x, y + 8, CARD_W, 4, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text(hotspot, x + CARD_W / 2, y + 7, { align: 'center' });
 
-  // Header text — "ISP HOTSPOT" subtitle
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5);
-  doc.setTextColor(160, 175, 200);
-  const d = doc as any;
-  d.setCharSpace(1.5);
-  doc.text('ISP HOTSPOT', x + W / 2, y + 2.4, { align: 'center' });
+  doc.setFontSize(5.5);
+  doc.setTextColor(105, 114, 128);
+  doc.text('VOUCHER CODE', x + CARD_W / 2, y + 16.2, { align: 'center' });
 
-  // Business name — bold white
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(card.code.length > 10 ? 14 : 16);
+  doc.setTextColor(17, 24, 39);
+  doc.text(card.code, x + CARD_W / 2, y + 23, { align: 'center' });
+
+  doc.setDrawColor(229, 231, 235);
+  doc.line(x + 5, y + 26.5, x + CARD_W - 5, y + 26.5);
+
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
-  doc.setTextColor(255, 255, 255);
-  d.setCharSpace(0.2);
-  const nameMaxW = W - 4;
-  const nameTrunc = doc.getTextWidth(businessName) * (7 / doc.getFontSize()) > nameMaxW
-    ? businessName.slice(0, 16) + (businessName.length > 16 ? '…' : '')
-    : businessName;
-  doc.text(nameTrunc.toUpperCase(), x + W / 2, y + HDR_H - 1.2, { align: 'center', maxWidth: nameMaxW });
-  d.setCharSpace(0);
+  doc.setTextColor(31, 41, 55);
+  doc.text(pkg, x + 5, y + 31.3);
 
-  // ── Accent stripe (blue) ──
-  doc.setFillColor(37, 99, 235);
-  doc.rect(x, y + HDR_H, W, ACC_H, 'F');
-
-  // ── Body background (white) ──
-  const bodyY = y + HDR_H + ACC_H;
-  doc.setFillColor(255, 255, 255);
-  doc.rect(x, bodyY, W, BODY_H, 'F');
-
-  // "VOUCHER CODE" label
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5);
-  doc.setTextColor(153, 153, 153);
-  d.setCharSpace(1);
-  doc.text('VOUCHER CODE', x + W / 2, bodyY + 2.8, { align: 'center' });
-  d.setCharSpace(0);
+  doc.setFontSize(6);
+  doc.setTextColor(75, 85, 99);
+  doc.text(`Validity: ${validity}`, x + 5, y + 35.2);
+  if (price) doc.text(price, x + CARD_W - 5, y + 35.2, { align: 'right' });
 
-  // Code — big Courier bold
-  doc.setFont('courier', 'bold');
-  doc.setFontSize(12);
-  doc.setTextColor(15, 15, 15);
-  d.setCharSpace(1.2);
-  // Scale down if code is long
-  const codeLen = card.code.length;
-  const codeFontSize = codeLen <= 8 ? 13 : codeLen <= 10 ? 11 : 9;
-  doc.setFontSize(codeFontSize);
-  doc.text(card.code, x + W / 2, bodyY + 7.2, { align: 'center' });
-  d.setCharSpace(0);
-
-  // ── Pills row ──
-  const pillY = bodyY + 10.2;
-  const pillH = 3;
-  const pillR = 0.8;
-  const pkgText = card.packageName.length > 12 ? card.packageName.slice(0, 12) + '…' : card.packageName;
-
-  doc.setFont('helvetica', 'bold');
   doc.setFontSize(5.5);
-
-  // Package pill — blue
-  const pkgW = doc.getTextWidth(pkgText) + 3.5;
-  const pkgPillX = x + 2.5;
-  doc.setFillColor(219, 234, 254);
-  doc.roundedRect(pkgPillX, pillY - 2.5, pkgW, pillH, pillR, pillR, 'F');
-  doc.setTextColor(30, 64, 175);
-  doc.text(pkgText, pkgPillX + pkgW / 2, pillY - 0.6, { align: 'center' });
-
-  // Duration pill — green (only if we have a label)
-  if (durationLabel) {
-    const durW = doc.getTextWidth(durationLabel) + 3.5;
-    const durPillX = pkgPillX + pkgW + 1.5;
-    if (durPillX + durW < x + W - 1) {
-      doc.setFillColor(220, 252, 231);
-      doc.roundedRect(durPillX, pillY - 2.5, durW, pillH, pillR, pillR, 'F');
-      doc.setTextColor(21, 128, 61);
-      doc.text(durationLabel, durPillX + durW / 2, pillY - 0.6, { align: 'center' });
-    }
-  }
-
-  // ── Price + serial ──
-  const priceY = bodyY + BODY_H - 0.8;
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(4.5);
-  doc.setTextColor(153, 153, 153);
-  d.setCharSpace(0.5);
-  doc.text('PRICE', x + 2.5, priceY - 2.2);
-  d.setCharSpace(0);
+  doc.setTextColor(107, 114, 128);
+  if (support) doc.text(`Support: ${support}`, x + 5, y + CARD_H - 7.4, { maxWidth: CARD_W - 10 });
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(15, 15, 15);
-  doc.text(priceLabel, x + 2.5, priceY);
-
-  // Serial number
+  doc.setFontSize(5.8);
+  doc.setTextColor(br, bg, bb);
+  doc.text('Powered by iCube', x + 5, y + CARD_H - 3.2);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(4.5);
-  doc.setTextColor(204, 204, 204);
-  doc.text(serial, x + W - 2, priceY, { align: 'right' });
-
-  // ── Footer background (#f9f9f9) ──
-  const footerY = y + H - FTR_H;
-  doc.setFillColor(249, 249, 249);
-  // Rounded at bottom
-  doc.roundedRect(x, footerY - 1, W, FTR_H + 1.5, 1.5, 1.5, 'F');
-  // Square off the top of footer
-  doc.rect(x, footerY - 1, W, 2, 'F');
-
-  // Footer separator line
-  doc.setDrawColor(229, 229, 229);
-  doc.setLineWidth(0.15);
-  doc.line(x, footerY, x + W, footerY);
-
-  // Footer left: domain
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5);
-  doc.setTextColor(136, 136, 136);
-  doc.text(domain, x + 2.5, footerY + 3);
-
-  // Footer right: green dot (unused = valid)
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(5.5);
-  doc.setTextColor(34, 197, 94);
-  doc.text('●', x + W - 2.5, footerY + 3, { align: 'right' });
-
-  // ── Card border ── (drawn last so it's on top)
-  doc.setDrawColor(229, 229, 229);
-  doc.setLineWidth(0.25);
-  doc.roundedRect(x, y, W, H, 1.5, 1.5, 'S');
+  doc.setTextColor(148, 163, 184);
+  doc.text(`#${String(idx + 1).padStart(3, '0')}`, x + CARD_W - 5, y + CARD_H - 3.2, { align: 'right' });
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────────
 export function buildVoucherPdf(opts: VoucherPdfOptions): jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const brandRgb = hexToRgb(opts.brandColor || '#1a1a2e');
-  const businessName = opts.businessName || 'ISP HOTSPOT';
-  const domain = opts.domain || 'web.icubeug.net';
+  const merged = {
+    businessName: opts.businessName || 'iCube Hotspot',
+    hotspotName: opts.hotspotName || opts.businessName || 'iCube Hotspot',
+    domain: opts.domain || 'icubeug.net',
+    supportPhones: opts.supportPhones || [],
+    brandColor: opts.brandColor || '#2563eb',
+  };
 
   const perPage = COLS * ROWS;
-  const totalPages = Math.max(1, Math.ceil(opts.cards.length / perPage));
-
-  for (let p = 0; p < totalPages; p++) {
-    if (p > 0) doc.addPage();
+  const pages = Math.max(1, Math.ceil(opts.cards.length / perPage));
+  for (let page = 0; page < pages; page++) {
+    if (page > 0) doc.addPage();
     drawCutLines(doc);
-
-    const pageCodes = opts.cards.slice(p * perPage, (p + 1) * perPage);
-    pageCodes.forEach((card, localIdx) => {
-      const globalIdx = p * perPage + localIdx;
+    opts.cards.slice(page * perPage, (page + 1) * perPage).forEach((card, localIdx) => {
       const col = localIdx % COLS;
       const row = Math.floor(localIdx / COLS);
-      const cx = MARGIN + col * (CARD_W + GAP_H);
-      const cy = MARGIN + row * (CARD_H + GAP_V);
-      drawCard(doc, cx, cy, globalIdx, card, businessName, domain, brandRgb);
+      drawCard(
+        doc,
+        MARGIN + col * (CARD_W + GAP),
+        MARGIN + row * (CARD_H + GAP),
+        page * perPage + localIdx,
+        card,
+        merged,
+      );
     });
   }
-
   return doc;
 }
 
@@ -275,11 +175,14 @@ export function downloadVoucherPdf(opts: VoucherPdfOptions, filename = 'vouchers
 
 export function printVoucherPdf(opts: VoucherPdfOptions): void {
   const blob = buildVoucherPdf(opts).output('blob');
-  const url  = URL.createObjectURL(blob);
-  const w    = window.open(url, '_blank');
-  if (w) {
-    w.addEventListener('load', () => {
-      setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 500);
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if (win) {
+    win.addEventListener('load', () => {
+      setTimeout(() => {
+        win.print();
+        URL.revokeObjectURL(url);
+      }, 500);
     });
   }
 }

@@ -45,6 +45,8 @@ function buildVpnBlock({
   /interface l2tp-client add name=icube-vpn connect-to=${l2tpHost} user="${l2tpUsername}" password="${l2tpPassword}" ipsec-secret="${ipsecSecret}" use-ipsec=yes add-default-route=no disabled=no comment="iCube L2TP fallback VPN"
   /ip route add dst-address=$icubeApiCidr gateway=icube-vpn distance=1 comment="iCube Server via L2TP"
 }
+:do { /ip service set winbox address=("10.99.0.0/24," . $icubeApiCidr) disabled=no port=8291 } on-error={ :log warning "iCube could not restrict Winbox service automatically" }
+:do { /ip service set api address=("10.99.0.0/24," . $icubeApiCidr) disabled=no port=8728 } on-error={ :log warning "iCube could not enable RouterOS API service automatically" }
 `;
 }
 

@@ -15,6 +15,8 @@ interface TenantInfo {
   secondary_color: string;
   support_phone: string | null;
   support_email: string | null;
+  portal_template?: string;
+  portal_theme?: string;
   free_trial_minutes?: number | null;
   free_trial_speed_mbps?: number | null;
 }
@@ -729,18 +731,25 @@ export default function TenantPortalPage({ params }: { params: { slug: string } 
   }
 
   const hasTrial = !!(tenant?.free_trial_minutes);
+  const tpl = tenant?.portal_template || 'classic';
+  const theme = tenant?.portal_theme || 'light';
+  const pageBg = tpl === 'compact'
+    ? '#eef2ff'
+    : tpl === 'hero'
+      ? `linear-gradient(145deg, #06111f 0%, ${primary}33 48%, #101827 100%)`
+      : `linear-gradient(135deg, ${primary}22 0%, #0f172a 50%, #1e293b 100%)`;
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
     ...(hasTrial ? [{ key: 'trial' as TabKey,   label: 'Free Trial',     icon: <Gift size={14} /> }] : []),
     { key: 'voucher', label: 'Enter Voucher', icon: <Ticket size={14} /> },
-    { key: 'paid',    label: 'I Paid',        icon: <CheckCheck size={14} /> },
+    { key: 'paid',    label: 'Already Bought Voucher', icon: <CheckCheck size={14} /> },
     { key: 'buy',     label: 'Buy Now',       icon: <CreditCard size={14} /> },
   ];
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: `linear-gradient(135deg, ${primary}22 0%, #0f172a 50%, #1e293b 100%)`,
+      background: pageBg,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '16px 12px', fontFamily: 'Inter, system-ui, sans-serif',
     }}>
@@ -750,7 +759,7 @@ export default function TenantPortalPage({ params }: { params: { slug: string } 
         @media (max-width: 420px) { .portal-tabs button { font-size: 11px !important; padding: 12px 4px !important; }  }
       `}</style>
 
-      <div style={{ width: '100%', maxWidth: 420 }}>
+      <div style={{ width: '100%', maxWidth: tpl === 'compact' ? 460 : 420 }}>
 
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
@@ -775,7 +784,7 @@ export default function TenantPortalPage({ params }: { params: { slug: string } 
         )}
 
         {/* Card */}
-        <div style={{ background: '#fff', borderRadius: 24, boxShadow: '0 25px 50px rgba(0,0,0,0.4)', overflow: 'hidden' }}>
+        <div style={{ background: '#fff', borderRadius: tpl === 'compact' ? 12 : 24, boxShadow: '0 25px 50px rgba(0,0,0,0.4)', overflow: 'hidden' }}>
 
           {/* Tabs */}
           <div className="portal-tabs" style={{ display: 'flex', borderBottom: '2px solid #f1f5f9', overflowX: 'auto', scrollbarWidth: 'none' }}>
@@ -814,6 +823,11 @@ export default function TenantPortalPage({ params }: { params: { slug: string } 
           </div>
         </div>
 
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 14 }}>
+          <span style={{ background: '#facc15', color: '#111827', borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800 }}>MTN MoMo</span>
+          <span style={{ background: '#ef4444', color: '#fff', borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800 }}>Airtel Money</span>
+        </div>
+
         {/* Footer */}
         <div style={{ textAlign: 'center', marginTop: 18, color: '#64748b', fontSize: 12 }}>
           {tenant?.support_phone && (
@@ -822,7 +836,17 @@ export default function TenantPortalPage({ params }: { params: { slug: string } 
               Support: <a href={`tel:${tenant.support_phone}`} style={{ color: primary }}>{tenant.support_phone}</a>
             </p>
           )}
-          <p style={{ margin: 0 }}>Powered by iCube · Secure connection</p>
+          {tenant?.support_email && (
+            <p style={{ margin: '0 0 4px' }}>
+              <a href={`mailto:${tenant.support_email}`} style={{ color: primary }}>{tenant.support_email}</a>
+            </p>
+          )}
+          <p style={{ margin: 0 }}>
+            Powered by{' '}
+            <a href="https://www.icubeug.net" style={{ color: primary, fontWeight: 700, textDecoration: 'none' }}>
+              iCube Solutions
+            </a>
+          </p>
         </div>
       </div>
     </div>

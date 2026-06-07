@@ -5,6 +5,7 @@ import {
   Ticket, Plus, Search, Copy, Check, X, Download,
   ChevronDown, Loader2, AlertCircle,
 } from 'lucide-react';
+import { downloadVoucherPdf } from '@/lib/voucherPdf';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function fmtDate(d: string | null) {
@@ -88,6 +89,8 @@ export default function VouchersPage() {
   const [toDate, setToDate] = useState('');
   const [generateOpen, setGenerateOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const [settings, setSettings] = useState<any>(null);
+  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
 
   // Generate form state
   const [genPackageId,  setGenPackageId]  = useState('');
@@ -102,12 +105,14 @@ export default function VouchersPage() {
   async function loadData() {
     setLoading(true); setError('');
     try {
-      const [v, pkgsRaw, s] = await Promise.all([
+      const [v, pkgsRaw, s, general] = await Promise.all([
         api.vouchers.list(),
         api.packages.list({ per_page: 100 }) as Promise<any>,
         api.sites.list(),
+        api.settings.getGeneral().catch(() => null),
       ]);
       setVouchers(v);
+      setSettings(general);
       const pkgs: Package[] = Array.isArray(pkgsRaw) ? pkgsRaw : (pkgsRaw.data ?? []);
       setPackages(pkgs);
       setSites(s);
@@ -160,6 +165,45 @@ export default function VouchersPage() {
     URL.revokeObjectURL(url);
   }
 
+  function voucherValidity(v: Voucher) {
+    if (v.duration_hrs) {
+      if (v.duration_hrs < 24) return `${v.duration_hrs} hour${v.duration_hrs === 1 ? '' : 's'}`;
+      const days = Math.round(v.duration_hrs / 24);
+      return `${days} day${days === 1 ? '' : 's'}`;
+    }
+    return v.expires_at ? `Until ${fmtDate(v.expires_at)}` : 'Until used';
+  }
+
+  function pdfCards(rows: Voucher[]) {
+    const fallbackSite = settings?.login_page_name || settings?.router_identity || 'iCube Hotspot';
+    return rows.map(v => ({
+      code: v.code,
+      packageName: v.package_name || 'WiFi Voucher',
+      durationHrs: Number(v.duration_hrs || 0),
+      priceUgx: Number(v.price_ugx || 0),
+      expiresAt: v.expires_at,
+      hotspotName: v.site_name || fallbackSite,
+      validity: voucherValidity(v),
+      supportPhones: [settings?.support_phone_1, settings?.support_phone_2].filter(Boolean),
+    }));
+  }
+
+  function downloadPdf(rows: Voucher[], name = 'icube-vouchers.pdf') {
+    if (!rows.length) {
+      setToast('No vouchers selected');
+      return;
+    }
+    downloadVoucherPdf({
+      cards: pdfCards(rows),
+      businessName: settings?.login_page_name || 'iCube Hotspot',
+      hotspotName: settings?.login_page_name || 'iCube Hotspot',
+      supportPhones: [settings?.support_phone_1, settings?.support_phone_2].filter(Boolean),
+      domain: 'icubeug.net',
+      brandColor: '#2563eb',
+    }, name);
+    setToast(`Downloaded ${rows.length} voucher${rows.length === 1 ? '' : 's'}`);
+  }
+
   // Filter by tab
   const tabFiltered = (() => {
     if (tab === 'trash') return trashVouchers;
@@ -178,6 +222,7 @@ export default function VouchersPage() {
     if (toDate && new Date(v.created_at) > new Date(toDate + 'T23:59:59')) return false;
     return true;
   });
+  const selectedRows = filtered.filter(v => selectedIds[v.id]);
 
   const TABS: { key: MainTab; label: string }[] = [
     { key: 'admin', label: 'Created by Admin' },
@@ -238,12 +283,12 @@ export default function VouchersPage() {
           <Plus size={13} /> Generate
         </button>
 
-        <button style={{
+        <button onClick={() => downloadPdf(selectedRows.length ? selectedRows : filtered, 'icube-voucher-sheet.pdf')} style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: '#131313', border: '1px solid #2a2a2a', color: '#aaa',
           borderRadius: 8, fontSize: 12, padding: '7px 12px', cursor: 'pointer',
         }}>
-          <Download size={12} /> Download by Note
+          <Download size={12} /> Download PDF
         </button>
 
         <button onClick={exportCSV} style={{
@@ -316,7 +361,12 @@ export default function VouchersPage() {
                     onMouseEnter={e => (e.currentTarget.style.background = '#1e1e1e')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                     <td style={{ padding: '9px 12px' }}>
-                      <input type="checkbox" style={{ accentColor: '#2563eb' }} />
+                      <input
+                        type="checkbox"
+                        checked={!!selectedIds[v.id]}
+                        onChange={e => setSelectedIds(s => ({ ...s, [v.id]: e.target.checked }))}
+                        style={{ accentColor: '#2563eb' }}
+                      />
                     </td>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}>
                       <span style={{ color: '#2563eb', fontFamily: 'monospace', fontSize: 12 }}>
@@ -403,6 +453,12 @@ export default function VouchersPage() {
                   borderRadius: 8, fontSize: 13, padding: '9px', cursor: 'pointer',
                 }}>
                   Close
+                </button>
+                <button onClick={() => downloadPdf(vouchers.filter(v => genResult.codes.includes(v.code)), 'icube-generated-vouchers.pdf')} style={{
+                  width: '100%', background: '#2563eb', border: 'none', color: '#fff',
+                  borderRadius: 8, fontSize: 13, padding: '9px', cursor: 'pointer', marginTop: 8,
+                }}>
+                  Download Generated PDF
                 </button>
               </div>
             ) : (

@@ -38,6 +38,7 @@ router.get('/', async (req, res) => {
         v.status, v.first_login_at, v.expires_at,
         v.use_case, v.note, v.created_at, v.deleted_at,
         v.site_id, v.package_id, v.tenant_id, v.source, v.agent_id,
+        p.duration_hrs, p.price_ugx,
         s.name AS site_name
       FROM vouchers v
       LEFT JOIN packages p ON p.id = v.package_id

@@ -1,5 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
 
 interface Template {
   id: string;
@@ -10,41 +11,62 @@ interface Template {
 
 const TEMPLATES: Template[] = [
   {
-    id: 'liquid-glass',
-    name: 'Liquid Glass',
-    desc: 'Beautiful frosted glass effect with dynamic blur',
-    tags: ['Glass Effect', 'Blur Background', 'Modern Aesthetics'],
+    id: 'classic',
+    name: 'Classic Pay',
+    desc: 'Simple voucher-first portal with packages below',
+    tags: ['Voucher Code', 'Mobile Money', 'Fast'],
   },
   {
-    id: 'minimalistic',
-    name: 'Minimalistic',
-    desc: 'Clean and simple portal design for maximum conversions',
-    tags: ['Clean', 'Fast Loading', 'High Conversion'],
+    id: 'compact',
+    name: 'Compact Cards',
+    desc: 'Dense layout for phones with quick package buying',
+    tags: ['Mobile First', 'Package Grid', 'Support'],
   },
   {
-    id: 'minimalistic-glass',
-    name: 'Minimalistic Glass',
-    desc: 'Minimalistic design with subtle glass effects',
-    tags: ['Glass Effect', 'Minimalistic', 'Modern'],
+    id: 'hero',
+    name: 'Hero Split',
+    desc: 'Large branded header with payment actions up front',
+    tags: ['Branded', 'Large Logo', 'Premium'],
   },
 ];
 
 export default function TemplatesPage() {
-  const [selectedTemplate, setSelectedTemplate] = useState('liquid-glass');
+  const [selectedTemplate, setSelectedTemplate] = useState('classic');
   const [selectedVariants, setSelectedVariants] = useState<Record<string, 'light' | 'dark'>>({
-    'liquid-glass': 'dark',
-    'minimalistic': 'light',
-    'minimalistic-glass': 'dark',
+    classic: 'light',
+    compact: 'light',
+    hero: 'dark',
   });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    api.settings.getPortalTemplate()
+      .then(t => {
+        setSelectedTemplate(t.portal_template || 'classic');
+        setSelectedVariants(v => ({ ...v, [t.portal_template || 'classic']: (t.portal_theme as 'light' | 'dark') || 'light' }));
+      })
+      .catch(() => {});
+  }, []);
 
   function selectVariant(templateId: string, variant: 'light' | 'dark') {
     setSelectedTemplate(templateId);
     setSelectedVariants((prev) => ({ ...prev, [templateId]: variant }));
   }
 
-  function handleApply() {
-    // Apply template action
-    alert(`Applied: ${selectedTemplate} (${selectedVariants[selectedTemplate] ?? 'dark'} variant)`);
+  async function handleApply() {
+    setSaving(true); setMsg('');
+    try {
+      await api.settings.putPortalTemplate({
+        portal_template: selectedTemplate,
+        portal_theme: selectedVariants[selectedTemplate] || 'light',
+      });
+      setMsg('Template applied');
+    } catch (e: any) {
+      setMsg(e.message || 'Could not apply template');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -127,7 +149,7 @@ export default function TemplatesPage() {
                         }}
                       >
                         <span style={{ fontSize: 9, color: v === 'light' ? '#555' : '#666', textAlign: 'center', padding: '0 4px' }}>
-                          {tpl.name}
+                          Logo · Hotspot · Voucher · Buy
                         </span>
                         {isSelected && (
                           <div
@@ -169,8 +191,9 @@ export default function TemplatesPage() {
           cursor: 'pointer',
         }}
       >
-        Apply Template
+        {saving ? 'Applying...' : 'Apply Template'}
       </button>
+      {msg && <span style={{ marginLeft: 12, color: msg.includes('Could') ? '#f87171' : '#22c55e', fontSize: 13 }}>{msg}</span>}
     </div>
   );
 }

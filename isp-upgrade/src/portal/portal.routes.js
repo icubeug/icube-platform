@@ -32,7 +32,8 @@ router.get('/:slug', async (req, res) => {
   try {
     const tenantRows = await db.query(`
       SELECT t.*, tb.logo_url, tb.primary_color, tb.secondary_color,
-             tb.company_name, tb.support_phone, tb.support_email
+             tb.company_name, tb.support_phone, tb.support_email,
+             tb.portal_template, tb.portal_theme
       FROM tenants t
       LEFT JOIN tenant_branding tb ON tb.tenant_id = t.id
       WHERE t.slug = $1 AND t.status != 'suspended'
@@ -60,6 +61,8 @@ router.get('/:slug', async (req, res) => {
         secondary_color: tenant.secondary_color || '#378ADD',
         support_phone: tenant.support_phone,
         support_email: tenant.support_email,
+        portal_template: tenant.portal_template || 'classic',
+        portal_theme: tenant.portal_theme || 'light',
       },
       packages: pkgRows,
     });
