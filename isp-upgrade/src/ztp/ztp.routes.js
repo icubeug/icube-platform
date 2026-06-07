@@ -2,6 +2,7 @@
 // Zero-Touch Provisioning — no tenant middleware, authenticated via bearer tokens
 const express = require('express');
 const router  = express.Router();
+const crypto  = require('crypto');
 const { detectRouterTier } = require('../routers/router-intelligence');
 
 const SERVER_IP = process.env.API_PUBLIC_HOST || 'web.icubeug.net';
@@ -13,7 +14,16 @@ function routerOsPrelude() {
 `;
 }
 
-function buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp }) {
+function buildVpnBlock({
+  privateKey,
+  serverPubKey,
+  vpnPort,
+  peerIp,
+  l2tpUsername,
+  l2tpPassword,
+  ipsecSecret,
+  l2tpHost,
+}) {
   return `:local rosver [/system resource get version]
 :local rosMajor [:tonum [:pick $rosver 0 [:find $rosver "."]]]
 :if ($rosMajor >= 7) do={
@@ -23,7 +33,9 @@ function buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp }) {
   /ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
   /ip route add dst-address=$icubeApiCidr gateway=icube-vpn distance=1 comment="iCube Server"
 } else={
-  :log warning ("iCube WireGuard skipped: RouterOS " . $rosver . " does not support /interface wireguard. Upgrade to RouterOS v7 for VPN remote access.")
+  :log warning ("iCube RouterOS " . $rosver . " detected; configuring L2TP/IPsec fallback VPN")
+  /interface l2tp-client add name=icube-vpn connect-to=${l2tpHost} user="${l2tpUsername}" password="${l2tpPassword}" ipsec-secret="${ipsecSecret}" use-ipsec=yes add-default-route=no disabled=no comment="iCube L2TP fallback VPN"
+  /ip route add dst-address=$icubeApiCidr gateway=icube-vpn distance=1 comment="iCube Server via L2TP"
 }
 `;
 }
@@ -47,27 +59,45 @@ async function lookupRouter(db, tenant_slug, install_token, bearer) {
   return { r };
 }
 
+async function ensureLegacyVpnCredentials(db, r) {
+  if (r.vpn_username && r.vpn_password) return r;
+  const vpnUsername = r.vpn_username || `router-${crypto.randomBytes(6).toString('hex')}`;
+  const vpnPassword = r.vpn_password || `lv-${crypto.randomBytes(18).toString('hex')}`;
+  const [updated] = await db.query(`
+    UPDATE routers
+       SET vpn_username = COALESCE(vpn_username, $2),
+           vpn_password = COALESCE(vpn_password, $3)
+     WHERE id = $1
+     RETURNING *
+  `, [r.id, vpnUsername, vpnPassword]);
+  return { ...r, ...updated };
+}
+
 // ── Script delivery ────────────────────────────────────────────────────────────
 // GET /api/v1/router/:tenant_slug/scripts/radius/:install_token
 router.get('/:tenant_slug/scripts/radius/:install_token', async (req, res) => {
   const { tenant_slug, install_token } = req.params;
   const bearer = extractBearer(req);
-  const { r, err, msg } = await lookupRouter(req.app.locals.db, tenant_slug, install_token, bearer);
+  const db = req.app.locals.db;
+  const { r, err, msg } = await lookupRouter(db, tenant_slug, install_token, bearer);
   if (err) return res.status(err).type('text/plain').send(msg);
+  const routerRow = await ensureLegacyVpnCredentials(db, r);
   res.type('text/plain')
-     .setHeader('Content-Disposition', `attachment; filename="icube-radius-${r.name.replace(/\s+/g, '-')}.rsc"`)
-     .send(buildRadiusScript(r));
+     .setHeader('Content-Disposition', `attachment; filename="icube-radius-${routerRow.name.replace(/\s+/g, '-')}.rsc"`)
+     .send(buildRadiusScript(routerRow));
 });
 
 // GET /api/v1/router/:tenant_slug/scripts/vpn/:install_token
 router.get('/:tenant_slug/scripts/vpn/:install_token', async (req, res) => {
   const { tenant_slug, install_token } = req.params;
   const bearer = extractBearer(req);
-  const { r, err, msg } = await lookupRouter(req.app.locals.db, tenant_slug, install_token, bearer);
+  const db = req.app.locals.db;
+  const { r, err, msg } = await lookupRouter(db, tenant_slug, install_token, bearer);
   if (err) return res.status(err).type('text/plain').send(msg);
+  const routerRow = await ensureLegacyVpnCredentials(db, r);
   res.type('text/plain')
-     .setHeader('Content-Disposition', `attachment; filename="icube-vpn-${r.name.replace(/\s+/g, '-')}.rsc"`)
-     .send(buildVPNScript(r));
+     .setHeader('Content-Disposition', `attachment; filename="icube-vpn-${routerRow.name.replace(/\s+/g, '-')}.rsc"`)
+     .send(buildVPNScript(routerRow));
 });
 
 // GET /api/v1/router/:tenant_slug/scripts/full/:install_token
@@ -79,9 +109,10 @@ router.get('/:tenant_slug/scripts/full/:install_token', async (req, res) => {
   try {
     const { r, err: lookupErr, msg } = await lookupRouter(db, tenant_slug, install_token, bearer);
     if (lookupErr) return res.status(lookupErr).type('text/plain').send(msg);
+    const routerRow = await ensureLegacyVpnCredentials(db, r);
     res.type('text/plain')
-       .setHeader('Content-Disposition', `attachment; filename="icube-setup-${r.name.replace(/\s+/g, '-')}.rsc"`)
-       .send(buildZTPScript(r));
+       .setHeader('Content-Disposition', `attachment; filename="icube-setup-${routerRow.name.replace(/\s+/g, '-')}.rsc"`)
+       .send(buildZTPScript(routerRow));
   } catch (err) {
     console.error('[ZTP] script error:', err.message);
     res.status(500).type('text/plain').send(`# Error: ${err.message}\n`);
@@ -222,6 +253,10 @@ function buildZTPScript(r) {
   const privateKey   = r.wireguard_private_key || '[PRIVATE_KEY_MISSING]';
   const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
   const peerIp       = r.wireguard_peer_ip || '10.99.0.2';
+  const l2tpHost     = process.env.VPN_L2TP_HOST || 'vpn.icubeug.net';
+  const l2tpUsername = r.vpn_username || `router-${String(r.id || '').slice(0, 8)}`;
+  const l2tpPassword = r.vpn_password || '[VPN_PASSWORD_MISSING]';
+  const ipsecSecret  = process.env.VPN_IPSEC_SECRET || 'icube-ipsec-2024';
   const gateway      = r.gateway_ip     || '192.168.1.1';
   const prefix       = r.subnet_prefix  || 24;
   const network      = r.network_address || '192.168.1.0';
@@ -276,9 +311,9 @@ ${routerOsPrelude()}
 /system ntp client set enabled=yes server-dns-name=time.google.com
 
 # ============================================
-# WIREGUARD VPN
+# VPN REMOTE ACCESS
 # ============================================
-${buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp })}
+${buildVpnBlock({ privateKey, serverPubKey, vpnPort, peerIp, l2tpUsername, l2tpPassword, ipsecSecret, l2tpHost })}
 
 # ============================================
 # DHCP & NETWORK
@@ -435,15 +470,19 @@ function buildVPNScript(r) {
   const privateKey   = r.wireguard_private_key || '[PRIVATE_KEY_MISSING]';
   const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
   const peerIp       = r.wireguard_peer_ip || '10.99.0.2';
+  const l2tpHost     = process.env.VPN_L2TP_HOST || 'vpn.icubeug.net';
+  const l2tpUsername = r.vpn_username || `router-${String(r.id || '').slice(0, 8)}`;
+  const l2tpPassword = r.vpn_password || '[VPN_PASSWORD_MISSING]';
+  const ipsecSecret  = process.env.VPN_IPSEC_SECRET || 'icube-ipsec-2024';
   const bearer       = r.bearer_token;
   const now          = new Date().toISOString();
   return `# ============================================
-# iCube WireGuard VPN Configuration
+# iCube VPN Configuration
 # Router: ${r.name}  Port: ${vpnPort}  Generated: ${now}
 # ============================================
 
 ${routerOsPrelude()}
-${buildWireguardBlock({ privateKey, serverPubKey, vpnPort, peerIp })}
+${buildVpnBlock({ privateKey, serverPubKey, vpnPort, peerIp, l2tpUsername, l2tpPassword, ipsecSecret, l2tpHost })}
 
 :local identity [/system identity get name]
 /tool fetch \\

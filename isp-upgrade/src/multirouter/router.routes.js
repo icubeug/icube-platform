@@ -28,6 +28,8 @@ router.post('/zero-touch', async (req, res) => {
     const installToken  = crypto.randomBytes(32).toString('hex');
     const apiUsername   = 'icube-api';
     const apiPassword   = 'ia-' + crypto.randomBytes(18).toString('hex');
+    const vpnUsername   = `router-${crypto.randomBytes(6).toString('hex')}`;
+    const vpnPassword   = 'lv-' + crypto.randomBytes(18).toString('hex');
 
     // Assign next VPN port (server-wide)
     const [portRow]  = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
@@ -62,7 +64,7 @@ router.post('/zero-touch', async (req, res) => {
          subnet_prefix, subnet_mask, network_address, gateway_ip,
          dhcp_pool_start, dhcp_pool_end, max_users, recommended_users, tier_name,
          model_name, status, bearer_token, install_token,
-         api_username, api_password)
+         api_username, api_password, vpn_username, vpn_password)
       VALUES
         ($1,$2,$3,'0.0.0.0','mikrotik',
          $4,$5,$6,
@@ -71,7 +73,7 @@ router.post('/zero-touch', async (req, res) => {
          $11,$12,$13,$14,
          $15,$16,$17,$18,$19,
          $20,'pending',$21,$22,
-         $23,$24)
+         $23,$24,$25,$26)
       RETURNING *
     `, [
       tid, site_id || null, name,
@@ -81,7 +83,7 @@ router.post('/zero-touch', async (req, res) => {
       tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
       tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users, tier.tier_name,
       null, bearerToken, installToken,
-      apiUsername, apiPassword,
+      apiUsername, apiPassword, vpnUsername, vpnPassword,
     ]);
 
     const newRouter = row;
@@ -103,8 +105,8 @@ router.post('/zero-touch', async (req, res) => {
       tier,
       tenantSlug:  tenant?.slug || 'default',
       vpnType:     vpn_type,
-      vpnUsername: newRouter.vpn_username || '',
-      vpnPassword: newRouter.vpn_password || '',
+      vpnUsername: newRouter.vpn_username || vpnUsername,
+      vpnPassword: newRouter.vpn_password || vpnPassword,
       ipsecSecret: process.env.VPN_IPSEC_SECRET || 'icube-ipsec-2024',
       apiUsername,
       apiPassword,
