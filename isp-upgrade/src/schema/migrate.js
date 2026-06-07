@@ -19,6 +19,7 @@ const migrations = [
   '012_ai_conversations.sql',
   '013_portal_template.sql',
   '014_router_api_credentials.sql',
+  '015_remote_winbox_ports.sql',
 ];
 
 async function ensureMigrationTable(client) {

@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle, Copy, Download, Loader2, RefreshCw, Router 
 type Tab = 'status' | 'install' | 'connect';
 
 const API_HOST = 'web.icubeug.net';
+const REMOTE_HOST = 'vpn.icubeug.net';
 
 function Badge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -59,7 +60,7 @@ export default function RemoteAccessPage() {
 
   const router = useMemo(() => routers.find(r => r.id === selectedId) || routers[0], [routers, selectedId]);
   const isConnected = !!(router?.vpn_connected || router?.status === 'online');
-  const remoteAddress = router?.wireguard_peer_ip ? `${router.wireguard_peer_ip}:8291` : (router?.vpn_address || 'VPN not configured');
+  const remoteAddress = router?.vpn_address || (router?.vpn_port ? `${REMOTE_HOST}:${router.vpn_port}` : 'Remote port not assigned');
   const installCommand = router?.install_token && router?.bearer_token && tenantSlug
     ? `/tool fetch url="https://${API_HOST}/api/v1/router/${tenantSlug}/scripts/vpn/${router.install_token}" http-header-field="Authorization: Bearer ${router.bearer_token}" dst-path="icube-remote-access.rsc" mode=https; :delay 2s; /import file-name="icube-remote-access.rsc"; :delay 1s; /file remove "icube-remote-access.rsc"`
     : '';
@@ -202,7 +203,7 @@ export default function RemoteAccessPage() {
                   <li>Login with the existing MikroTik username and password.</li>
                 </ol>
                 <p style={{ color: '#fbbf24', fontSize: 12, margin: '12px 0 0' }}>
-                  For public host:port style access like ZenFi, the VPS still needs TCP port forwarding from the public edge to each router VPN IP on port 8291.
+                  This public address works after the VPS forwards this port to the router VPN IP on Winbox port 8291.
                 </p>
               </Card>
             )}

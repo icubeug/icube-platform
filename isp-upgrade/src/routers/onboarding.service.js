@@ -22,8 +22,8 @@ async function createDefaultSiteAndRouter(db, tenant, { siteName, siteLocation }
     RETURNING *
   `, [tenant.id, siteName || `${tenant.name} Main Site`, siteLocation || 'Default site']);
 
-  const [portRow] = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
-  const vpnPort = Math.min(parseInt(portRow.next_port, 10), 51920);
+  const [portRow] = await db.query(`SELECT COALESCE(MAX(vpn_port), 32599) + 1 AS next_port FROM routers WHERE vpn_port BETWEEN 32600 AND 39999`);
+  const vpnPort = parseInt(portRow.next_port, 10);
   const vpnAddress = `vpn.icubeug.net:${vpnPort}`;
 
   let privateKey = '';

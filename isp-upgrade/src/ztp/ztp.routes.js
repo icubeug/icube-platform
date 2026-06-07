@@ -25,7 +25,7 @@ function buildRadiusCommands(radiusSecret) {
 function buildVpnBlock({
   privateKey,
   serverPubKey,
-  vpnPort,
+  wgServerPort,
   peerIp,
   l2tpUsername,
   l2tpPassword,
@@ -37,7 +37,7 @@ function buildVpnBlock({
 :if ($rosMajor >= 7) do={
   :log info "iCube configuring WireGuard VPN"
   /interface wireguard add name=icube-vpn private-key="${privateKey}" listen-port=13231 comment="iCube VPN v2"
-  /interface wireguard peers add interface=icube-vpn public-key="${serverPubKey}" endpoint-address=vpn.icubeug.net endpoint-port=${vpnPort} allowed-address=("10.99.0.0/24," . $icubeApiCidr) persistent-keepalive=25
+  /interface wireguard peers add interface=icube-vpn public-key="${serverPubKey}" endpoint-address=vpn.icubeug.net endpoint-port=${wgServerPort} allowed-address=("10.99.0.0/24," . $icubeApiCidr) persistent-keepalive=25
   /ip address add address=${peerIp}/24 interface=icube-vpn comment="iCube VPN IP"
   /ip route add dst-address=$icubeApiCidr gateway=icube-vpn distance=1 comment="iCube Server"
 } else={
@@ -259,7 +259,7 @@ router.post('/heartbeat', async (req, res) => {
 
 // ── ZTP Script builder ─────────────────────────────────────────────────────────
 function buildZTPScript(r) {
-  const vpnPort      = r.vpn_port      || 51820;
+  const wgServerPort = parseInt(process.env.WG_SERVER_PORT || '51820', 10);
   const privateKey   = r.wireguard_private_key || '[PRIVATE_KEY_MISSING]';
   const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
   const peerIp       = r.wireguard_peer_ip || '10.99.0.2';
@@ -323,7 +323,7 @@ ${routerOsPrelude()}
 # ============================================
 # VPN REMOTE ACCESS
 # ============================================
-${buildVpnBlock({ privateKey, serverPubKey, vpnPort, peerIp, l2tpUsername, l2tpPassword, ipsecSecret, l2tpHost })}
+${buildVpnBlock({ privateKey, serverPubKey, wgServerPort, peerIp, l2tpUsername, l2tpPassword, ipsecSecret, l2tpHost })}
 
 # ============================================
 # DHCP & NETWORK
@@ -458,7 +458,7 @@ ${buildRadiusCommands(r.radius_secret)}
 
 // ── Partial: VPN only ─────────────────────────────────────────────────────────
 function buildVPNScript(r) {
-  const vpnPort      = r.vpn_port      || 51820;
+  const wgServerPort = parseInt(process.env.WG_SERVER_PORT || '51820', 10);
   const privateKey   = r.wireguard_private_key || '[PRIVATE_KEY_MISSING]';
   const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
   const peerIp       = r.wireguard_peer_ip || '10.99.0.2';
@@ -470,11 +470,11 @@ function buildVPNScript(r) {
   const now          = new Date().toISOString();
   return `# ============================================
 # iCube VPN Configuration
-# Router: ${r.name}  Port: ${vpnPort}  Generated: ${now}
+# Router: ${r.name}  Generated: ${now}
 # ============================================
 
 ${routerOsPrelude()}
-${buildVpnBlock({ privateKey, serverPubKey, vpnPort, peerIp, l2tpUsername, l2tpPassword, ipsecSecret, l2tpHost })}
+${buildVpnBlock({ privateKey, serverPubKey, wgServerPort, peerIp, l2tpUsername, l2tpPassword, ipsecSecret, l2tpHost })}
 
 :local identity [/system identity get name]
 /tool fetch \\

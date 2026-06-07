@@ -31,9 +31,9 @@ router.post('/zero-touch', async (req, res) => {
     const vpnUsername   = `router-${crypto.randomBytes(6).toString('hex')}`;
     const vpnPassword   = 'lv-' + crypto.randomBytes(18).toString('hex');
 
-    // Assign next VPN port (server-wide)
-    const [portRow]  = await db.query(`SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`);
-    const vpnPort    = Math.min(parseInt(portRow.next_port, 10), 51920);
+    // Assign next public Winbox forwarding port (server-wide)
+    const [portRow]  = await db.query(`SELECT COALESCE(MAX(vpn_port), 32599) + 1 AS next_port FROM routers WHERE vpn_port BETWEEN 32600 AND 39999`);
+    const vpnPort    = parseInt(portRow.next_port, 10);
     const vpnAddress = `vpn.icubeug.net:${vpnPort}`;
 
     // WireGuard keys
@@ -245,11 +245,11 @@ router.post('/', async (req, res) => {
     // Auto-generate RADIUS secret
     const radiusSecret = 'rs-' + require('crypto').randomBytes(12).toString('hex');
 
-    // Assign next unique VPN port (range 51820–51920, server-wide)
+    // Assign next public Winbox forwarding port (server-wide)
     const [portRow] = await db.query(`
-      SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers
+      SELECT COALESCE(MAX(vpn_port), 32599) + 1 AS next_port FROM routers WHERE vpn_port BETWEEN 32600 AND 39999
     `);
-    const vpnPort    = Math.min(parseInt(portRow.next_port, 10), 51920);
+    const vpnPort    = parseInt(portRow.next_port, 10);
     const vpnAddress = `vpn.icubeug.net:${vpnPort}`;
 
     const rows = await db.query(`
