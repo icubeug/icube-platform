@@ -490,14 +490,14 @@ router.post('/tenants/:tenant_id/routers/zero-touch', requireSuperadmin, async (
          bearer_token, install_token)
       VALUES ($1,$2,$3,'0.0.0.0','mikrotik',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'pending',$21,$22)
       RETURNING *
-    `, [tid, site_id||null, name, radiusSecret, vpnPort, vpnAddress,
+    `, [parseInt(tid,10), site_id||null, name, radiusSecret, vpnPort, vpnAddress,
         privateKey, publicKey, peerIp, peerIdx,
         tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
         tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users,
         tier.tier_name, model||null, bearerToken, installToken]);
 
     const newRouter = row;
-    const [tenant]  = await db.query(`SELECT slug, name FROM tenants WHERE id = $1`, [tid]);
+    const [tenant]  = await db.query(`SELECT slug, name FROM tenants WHERE id = $1`, [parseInt(tid,10)]);
     const serverPubKey = process.env.WG_SERVER_PUBLIC_KEY || '[SERVER_PUBLIC_KEY]';
 
     const script = generateZeroTouchScript({

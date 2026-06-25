@@ -126,6 +126,76 @@ router.post('/register', async (req, res) => {
       RETURNING id, email, name, role
     `, [tenant.id, email, hash, owner_name || business_name, normalizedPhone]);
 
+    // ── 4. Auto-provision: create default site + router ─────────────────────
+    try {
+      const { detectRouterTier } = require('../routers/router-intelligence');
+      const crypto2 = require('crypto');
+
+      // Create default site
+      const [site] = await db.query(`
+        INSERT INTO sites (name, location, tenant_id)
+        VALUES ($1, $2, $3) RETURNING *
+      `, [`${business_name} Main Site`, 'Main Location', tenant.id]);
+
+      // Auto-provision router
+      const radiusSecret = 'rs-' + crypto2.randomBytes(16).toString('hex');
+      const bearerToken  = 'icube_' + crypto2.randomBytes(32).toString('hex');
+      const installToken = crypto2.randomBytes(32).toString('hex');
+
+      const [portRow] = await db.query(
+        `SELECT COALESCE(MAX(vpn_port), 51819) + 1 AS next_port FROM routers`
+      );
+      const vpnPort  = Math.min(parseInt(portRow.next_port, 10), 51920);
+
+      let privateKey = '', publicKey = '';
+      try {
+        const { execSync } = require('child_process');
+        privateKey = execSync('wg genkey', { encoding: 'utf8' }).trim();
+        publicKey  = execSync(`echo "${privateKey}" | wg pubkey`, { encoding: 'utf8' }).trim();
+      } catch {
+        privateKey = crypto2.randomBytes(32).toString('base64');
+        publicKey  = crypto2.randomBytes(32).toString('base64');
+      }
+
+      const [peerRow] = await db.query(
+        `SELECT COALESCE(MAX(wireguard_peer_index), 1) + 1 AS next_idx FROM routers`
+      );
+      const peerIdx = parseInt(peerRow.next_idx, 10);
+      const peerIp  = `10.99.0.${peerIdx}`;
+      const tier    = detectRouterTier(null);
+
+      await db.query(`
+        INSERT INTO routers
+          (tenant_id, site_id, name, ip_address, brand,
+           radius_secret, vpn_port, vpn_address,
+           wireguard_private_key, wireguard_public_key,
+           wireguard_peer_ip, wireguard_peer_index,
+           subnet_prefix, subnet_mask, network_address, gateway_ip,
+           dhcp_pool_start, dhcp_pool_end, max_users, recommended_users, tier_name,
+           status, bearer_token, install_token)
+        VALUES
+          ($1,$2,$3,'0.0.0.0','mikrotik',
+           $4,$5,$6,
+           $7,$8,
+           $9,$10,
+           $11,$12,$13,$14,
+           $15,$16,$17,$18,$19,
+           'pending',$20,$21)
+      `, [
+        tenant.id, site.id, `${business_name} Main Router`,
+        radiusSecret, vpnPort, `139.84.247.205:${vpnPort}`,
+        privateKey, publicKey,
+        peerIp, peerIdx,
+        tier.subnet_prefix, tier.subnet_mask, tier.network, tier.gateway,
+        tier.pool_start, tier.pool_end, tier.max_users, tier.recommended_users, tier.tier_name,
+        bearerToken, installToken,
+      ]);
+
+      console.log(`[Auth] Auto-provisioned router for tenant ${tenant.slug}`);
+    } catch (provisionErr) {
+      console.error('[Auth] Auto-provision failed:', provisionErr.message);
+    }
+
     // ── 4. Issue JWT ──────────────────────────────────────────────────────────
     const jwtToken = jwt.sign(
       { admin_id: admin.id, tenant_id: tenant.id, role: admin.role },
