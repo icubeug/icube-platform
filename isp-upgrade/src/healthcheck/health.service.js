@@ -102,11 +102,7 @@ async function checkRADIUS() {
 async function checkCaptivePortal(db) {
   // Fetch portal route — expect 200 or 302
   try {
-    const [site] = await db.query(
-      `SELECT COALESCE(portal_url, 'http://web.icubeug.net/portal') AS url
-       FROM sites LIMIT 1`
-    );
-    const url = site?.url || 'http://web.icubeug.net/portal';
+    const url = process.env.PORTAL_URL || `${process.env.PLATFORM_URL || 'https://web.icubeug.net'}/portal`;
     const res = await httpGet(url);
     return { ok: res.ok || res.status === 302, status: res.status, url, latency_ms: res.latency };
   } catch (err) {
@@ -246,8 +242,8 @@ async function checkPaymentAPIs() {
     if (!p.configured) { results[p.id] = { ok: null, skipped: true, reason: 'not configured' }; continue; }
     // Simple HTTP ping to provider base URLs
     if (p.id === 'stripe') {
-      const r = await httpGet('https://api.stripe.com').catch(() => ({ ok: false }));
-      results[p.id] = { ok: r.ok || r.status === 401, status: r.status }; // 401 = reachable
+      const r = await httpGet('https://api.stripe.com/v1/charges').catch(() => ({ ok: false }));
+      results[p.id] = { ok: r.status === 401 || r.ok, status: r.status }; // 401 = reachable, creds needed
     } else if (p.id === 'mtn') {
       const r = await httpGet(process.env.MTN_COLLECTION_URL || 'https://sandbox.momodeveloper.mtn.com').catch(() => ({ ok: false }));
       results[p.id] = { ok: r.ok || r.status > 0 };

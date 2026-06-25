@@ -5,6 +5,7 @@ const crypto   = require('crypto');
 const { handleHeartbeat, generateMikrotikScript } = require('../vpn/vpn.service');
 const { provisionRouterPeer, getVpnStatus }       = require('../vpn/wireguard.service');
 const { detectRouterTier, generateZeroTouchScript } = require('../routers/router-intelligence');
+const { requireLicense } = require('../licensing/license.middleware');
 
 // POST /api/v1/routers/zero-touch — create router without IP (zero-touch onboarding)
 // Available to all authenticated tenants
@@ -228,7 +229,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/v1/routers
-router.post('/', async (req, res) => {
+router.post('/', requireLicense('routers'), async (req, res) => {
   const { name, ip_address, api_port, api_username, api_password, site_id, brand } = req.body;
   if (!name || !ip_address) return res.status(400).json({ error: 'name and ip_address required' });
   try {

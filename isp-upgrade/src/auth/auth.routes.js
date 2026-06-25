@@ -203,7 +203,8 @@ router.post('/register', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    res.status(201).json({ token: jwtToken, admin, tenant });
+    const { password_hash: _ph, api_token: _at, ...safeTenant } = tenant;
+    res.status(201).json({ token: jwtToken, admin, tenant: safeTenant });
   } catch (err) {
     console.error('[Auth] register error:', err.message);
     res.status(500).json({ error: err.message });

@@ -1,6 +1,7 @@
 // src/sites/site.routes.js
 const express = require('express');
 const { requireAdmin } = require('../auth/admin.middleware');
+const { requireLicense } = require('../licensing/license.middleware');
 const router = express.Router();
 
 router.use(requireAdmin);
@@ -43,7 +44,7 @@ router.get('/limit', async (req, res) => {
 });
 
 // POST /api/v1/sites
-router.post('/', async (req, res) => {
+router.post('/', requireLicense('sites'), async (req, res) => {
   const { name, location } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   const db  = req.app.locals.db;
