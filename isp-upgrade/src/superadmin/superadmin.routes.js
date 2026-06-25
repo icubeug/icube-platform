@@ -766,26 +766,61 @@ router.post('/tenants/:id/delete', requireSuperadmin, async (req, res) => {
     const [tenant] = await db.query(`SELECT * FROM tenants WHERE id = $1`, [req.params.id]);
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
-    // Cascade delete in correct order
     const tid = req.params.id;
-    await db.query(`DELETE FROM vouchers             WHERE tenant_id = $1`, [tid]);
-    await db.query(`DELETE FROM packages             WHERE tenant_id = $1`, [tid]);
-    await db.query(`DELETE FROM customers            WHERE tenant_id = $1`, [tid]);
-    await db.query(`DELETE FROM routers              WHERE tenant_id = $1`, [tid]);
-    await db.query(`DELETE FROM sites                WHERE tenant_id = $1`, [tid]);
-    await db.query(`DELETE FROM float_accounts       WHERE tenant_id = $1`, [tid]).catch(() => {});
-    await db.query(`DELETE FROM float_transactions   WHERE tenant_id = $1`, [tid]).catch(() => {});
-    await db.query(`DELETE FROM disbursements        WHERE tenant_id = $1`, [tid]).catch(() => {});
-    await db.query(`DELETE FROM platform_transactions WHERE tenant_id = $1`, [tid]).catch(() => {});
-    await db.query(`DELETE FROM admins               WHERE tenant_id = $1`, [tid]);
-    await db.query(`DELETE FROM tenant_branding      WHERE tenant_id = $1`, [tid]).catch(() => {});
-    await db.query(`DELETE FROM tenants              WHERE id = $1`,        [tid]);
+    await db.query('BEGIN');
+    try {
+      // Disable RADIUS entries first (so no new hotspot auth happens during cleanup)
+      await db.query(`
+        UPDATE radcheck SET value = 'DISABLED'
+        WHERE username IN (SELECT code FROM vouchers WHERE tenant_id = $1)
+      `, [tid]);
 
-    // Log deletion
-    await db.query(`
-      INSERT INTO deletion_log (deleted_by, deleted_by_email, entity_type, entity_id, entity_name)
-      VALUES ($1, $2, 'tenant', $3, $4)
-    `, [req.superadmin.superadmin_id, saUser.email, tid, tenant.name]).catch(() => {});
+      // Delete in correct FK dependency order
+      // Leaf tables first, then parents
+      await db.query(`DELETE FROM hotspot_sessions       WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM portal_payments        WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM router_heartbeats      WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM impersonation_sessions WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM remote_sessions        WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM audit_logs             WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM security_incidents     WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM vouchers               WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM packages               WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM customers              WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM router_metrics         WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM router_setup_configs   WHERE router_id IN (SELECT id FROM routers WHERE tenant_id = $1)`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM routers                WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM sites                  WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM float_accounts         WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM float_transactions     WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM float_purchases        WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM disbursements          WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM platform_transactions  WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM billing_invoices       WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM tenant_billing         WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM payments               WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM pppoe_subscribers      WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM pppoe_plans            WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM admins                 WHERE tenant_id = $1`, [tid]);
+      await db.query(`DELETE FROM tenant_branding        WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM support_notes          WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM ai_conversations       WHERE tenant_id = $1`, [tid]).catch(() => {});
+      await db.query(`DELETE FROM tenants                WHERE id = $1`,        [tid]);
+
+      // Log deletion
+      const [saUser] = await db.query(
+        `SELECT email FROM superadmin_users WHERE id = $1`, [req.superadmin.superadmin_id]
+      );
+      await db.query(`
+        INSERT INTO deletion_log (deleted_by, deleted_by_email, entity_type, entity_id, entity_name)
+        VALUES ($1, $2, 'tenant', $3, $4)
+      `, [req.superadmin.superadmin_id, saUser?.email, tid, tenant.name]);
+
+      await db.query('COMMIT');
+    } catch (err) {
+      await db.query('ROLLBACK');
+      throw err;
+    }
 
     res.json({ ok: true, deleted_tenant: tenant.name, message: `Tenant "${tenant.name}" has been permanently deleted.` });
   } catch (err) {

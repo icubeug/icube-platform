@@ -614,4 +614,129 @@ router.get('/2fa/status', requireAdmin, async (req, res) => {
   res.json({ totp_enabled: !!row?.totp_verified });
 });
 
+// ── DELETE /api/auth/account — self-service soft-delete with PII anonymisation ─
+// Requires: current password + business name (typed to confirm)
+// Effect:   marks tenant 'deleted', anonymises PII, orphans routers,
+//           disables RADIUS entries, logs to deletion_log, invalidates session.
+// Financial records (payments, billing, audit_logs) are NEVER deleted.
+router.delete('/account', requireAdmin, async (req, res) => {
+  const db    = req.app.locals.db;
+  const redis = req.app.locals.redis;
+  const { password, business_name } = req.body;
+
+  if (!password || !business_name) {
+    return res.status(400).json({ error: 'password and business_name are required to confirm deletion' });
+  }
+
+  try {
+    // 1. Load admin + tenant
+    const [admin] = await db.query(
+      `SELECT a.*, t.name AS tenant_name, t.id AS tenant_id, t.slug,
+              t.owner_email, t.status AS tenant_status
+       FROM admins a JOIN tenants t ON t.id = a.tenant_id
+       WHERE a.id = $1`, [req.admin.admin_id]
+    );
+    if (!admin) return res.status(404).json({ error: 'Account not found' });
+    if (admin.tenant_status === 'deleted') {
+      return res.status(409).json({ error: 'Account is already scheduled for deletion' });
+    }
+
+    // 2. Verify password
+    const hash = admin.password_hash_bcrypt || admin.password_hash;
+    const valid = await bcrypt.compare(password, hash);
+    if (!valid) return res.status(401).json({ error: 'Incorrect password' });
+
+    // 3. Verify business name matches (case-insensitive, trimmed)
+    const supplied = business_name.trim().toLowerCase();
+    const actual   = (admin.tenant_name || '').trim().toLowerCase();
+    if (supplied !== actual) {
+      return res.status(400).json({
+        error: 'Business name does not match. Please type your exact business name to confirm.',
+      });
+    }
+
+    const tid = admin.tenant_id;
+
+    await db.query('BEGIN');
+    try {
+      // 4. Soft-delete: mark tenant deleted + anonymise PII
+      const anonEmail = `deleted_${Date.now()}@removed.invalid`;
+      await db.query(`
+        UPDATE tenants SET
+          status          = 'deleted',
+          deleted_at      = NOW(),
+          deletion_reason = 'self_service',
+          owner_email     = $2,
+          owner_phone     = NULL,
+          owner_name      = 'Deleted Account',
+          phone           = NULL,
+          password_hash   = NULL,
+          api_token       = NULL
+        WHERE id = $1
+      `, [tid, anonEmail]);
+
+      // 5. Orphan deployed routers (don't delete — hardware is still in the field)
+      await db.query(`UPDATE routers SET status = 'orphaned' WHERE tenant_id = $1`, [tid]);
+
+      // 6. Disable RADIUS entries for this tenant's vouchers
+      //    Set Cleartext-Password value to 'DISABLED' so FreeRADIUS rejects auth
+      await db.query(`
+        UPDATE radcheck SET value = 'DISABLED'
+        WHERE username IN (
+          SELECT code FROM vouchers WHERE tenant_id = $1
+        )
+      `, [tid]);
+
+      // 7. Expire all active vouchers so no new hotspot sessions start
+      await db.query(`
+        UPDATE vouchers SET status = 'expired', expires_at = NOW()
+        WHERE tenant_id = $1 AND status IN ('unused','active')
+      `, [tid]);
+
+      // 8. Anonymise admin records (keep rows — FK to audit_logs)
+      await db.query(`
+        UPDATE admins SET
+          email         = 'deleted_' || id || '@removed.invalid',
+          name          = 'Deleted User',
+          phone         = NULL,
+          password_hash = '',
+          password_hash_bcrypt = NULL,
+          totp_secret   = NULL,
+          totp_verified = FALSE
+        WHERE tenant_id = $1
+      `, [tid]);
+
+      // 9. Log to deletion_log
+      await db.query(`
+        INSERT INTO deletion_log
+          (deleted_by, deleted_by_email, entity_type, entity_id, entity_name)
+        VALUES ($1, $2, 'tenant', $3, $4)
+      `, [admin.id, admin.owner_email, tid, admin.tenant_name]);
+
+      // 10. Audit log entry
+      await db.query(`
+        INSERT INTO audit_logs (tenant_id, actor_id, actor_type, action, entity_type, entity_id, payload)
+        VALUES ($1, $2, 'admin', 'tenant.self_deleted', 'tenant', $1, $3)
+      `, [tid, admin.id, JSON.stringify({ method: 'self_service', slug: admin.slug })]);
+
+      await db.query('COMMIT');
+    } catch (err) {
+      await db.query('ROLLBACK');
+      throw err;
+    }
+
+    // 11. Invalidate Redis session/OTP entries for this tenant's email
+    await redis.del(`otp:${admin.email}`).catch(() => {});
+    await redis.del(`reset:${admin.email}`).catch(() => {});
+
+    res.json({
+      ok: true,
+      message: 'Your account has been deleted. All active services have been disabled. Financial records are retained as required by law. You will be logged out.',
+    });
+  } catch (err) {
+    console.error('[Account] deletion error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
