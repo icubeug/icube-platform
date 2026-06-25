@@ -1,6 +1,7 @@
 // src/agent/agent.routes.js
-// REST endpoints consumed by the agent's mobile POS web app.
-// All routes except /login require a valid agent JWT.
+// Admin routes (requireAdmin) and agent POS routes (requireAgent) share this router.
+// Admin routes: GET /, POST /, PATCH /:id — use standard admin JWT.
+// Agent routes: /login, /dashboard, /packages, /sale, /withdraw, /sales-history — agent JWT.
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
@@ -11,6 +12,7 @@ const {
   requestWithdrawal,
   getAgentDashboard,
 } = require('./agent.service');
+const { requireAdmin } = require('../auth/admin.middleware');
 
 const AGENT_JWT_SECRET = process.env.AGENT_JWT_SECRET || process.env.JWT_SECRET;
 
@@ -134,6 +136,82 @@ router.get('/sales-history', requireAgent, async (req, res) => {
       LIMIT $2 OFFSET $3
     `, [req.agent.agent_id, limit, offset]);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin routes (admin JWT required) ────────────────────────────────────────
+
+// GET /api/v1/agents — list all agents for this tenant
+router.get('/', requireAdmin, async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant_id;
+  const page     = Math.max(1, parseInt(req.query.page) || 1);
+  const per_page = Math.min(100, parseInt(req.query.per_page) || 20);
+  const offset   = (page - 1) * per_page;
+  try {
+    const rows = await db.query(`
+      SELECT a.id, a.name, a.phone, a.status, a.commission_pct,
+             a.wallet_balance, a.site_id, a.created_at,
+             s.name AS site_name
+      FROM agents a
+      LEFT JOIN sites s ON s.id = a.site_id
+      WHERE a.tenant_id = $1
+      ORDER BY a.created_at DESC
+      LIMIT $2 OFFSET $3
+    `, [tid, per_page, offset]);
+    const [{ total }] = await db.query(
+      `SELECT COUNT(*) AS total FROM agents WHERE tenant_id = $1`, [tid]
+    );
+    res.json({ data: rows, total: parseInt(total), page, per_page });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v1/agents — create agent (admin)
+router.post('/', requireAdmin, async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant_id;
+  const bcrypt = require('bcrypt');
+  const { name, phone, pin, site_id, commission_pct = 5 } = req.body;
+  if (!name || !phone || !pin) {
+    return res.status(400).json({ error: 'name, phone, and pin required' });
+  }
+  try {
+    const pin_hash = await bcrypt.hash(String(pin), 10);
+    const [row] = await db.query(`
+      INSERT INTO agents (tenant_id, name, phone, pin_hash, site_id, commission_pct)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING id, name, phone, status, commission_pct, wallet_balance, site_id, created_at
+    `, [tid, name, phone, pin_hash, site_id || null, commission_pct]);
+    res.status(201).json(row);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Phone number already registered' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/v1/agents/:id — update agent (admin)
+router.patch('/:id', requireAdmin, async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant_id;
+  const { name, phone, site_id, commission_pct, status } = req.body;
+  try {
+    const [row] = await db.query(`
+      UPDATE agents SET
+        name           = COALESCE($1, name),
+        phone          = COALESCE($2, phone),
+        site_id        = COALESCE($3, site_id),
+        commission_pct = COALESCE($4, commission_pct),
+        status         = COALESCE($5, status),
+        updated_at     = NOW()
+      WHERE id = $6 AND tenant_id = $7
+      RETURNING id, name, phone, status, commission_pct, wallet_balance, site_id, updated_at
+    `, [name, phone, site_id, commission_pct, status, req.params.id, tid]);
+    if (!row) return res.status(404).json({ error: 'Agent not found' });
+    res.json(row);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

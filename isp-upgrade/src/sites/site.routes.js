@@ -1,9 +1,13 @@
 // src/sites/site.routes.js
 const express = require('express');
+const { requireAdmin } = require('../auth/admin.middleware');
 const router = express.Router();
+
+router.use(requireAdmin);
 
 // GET /api/v1/sites
 router.get('/', async (req, res) => {
+  const tid = req.tenant_id;
   try {
     const rows = await req.app.locals.db.query(`
       SELECT s.*,
@@ -12,9 +16,10 @@ router.get('/', async (req, res) => {
       FROM sites s
       LEFT JOIN routers r ON r.site_id = s.id
       LEFT JOIN vouchers v ON v.site_id = s.id
+      WHERE s.tenant_id = $1
       GROUP BY s.id
       ORDER BY s.created_at DESC
-    `);
+    `, [tid]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -23,10 +28,11 @@ router.get('/', async (req, res) => {
 
 // GET /api/v1/sites/limit — returns current count + max for this tenant
 router.get('/limit', async (req, res) => {
-  const db = req.app.locals.db;
+  const db  = req.app.locals.db;
+  const tid = req.tenant_id;
   try {
-    const [tenant]   = await db.query(`SELECT max_sites FROM tenants WHERE id = $1`, [req.tenant_id]);
-    const [countRow] = await db.query(`SELECT COUNT(*) FROM sites WHERE tenant_id = $1`, [req.tenant_id]);
+    const [tenant]   = await db.query(`SELECT max_sites FROM tenants WHERE id = $1`, [tid]);
+    const [countRow] = await db.query(`SELECT COUNT(*) FROM sites WHERE tenant_id = $1`, [tid]);
     res.json({
       max_sites: tenant?.max_sites ?? 5,
       count:     parseInt(countRow.count, 10),
@@ -40,12 +46,12 @@ router.get('/limit', async (req, res) => {
 router.post('/', async (req, res) => {
   const { name, location } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
-  const db = req.app.locals.db;
+  const db  = req.app.locals.db;
+  const tid = req.tenant_id;
   try {
-    // Enforce site limit
-    const [tenant]   = await db.query(`SELECT max_sites FROM tenants WHERE id = $1`, [req.tenant_id]);
+    const [tenant]   = await db.query(`SELECT max_sites FROM tenants WHERE id = $1`, [tid]);
     const maxSites   = tenant?.max_sites ?? 5;
-    const [countRow] = await db.query(`SELECT COUNT(*) FROM sites WHERE tenant_id = $1`, [req.tenant_id]);
+    const [countRow] = await db.query(`SELECT COUNT(*) FROM sites WHERE tenant_id = $1`, [tid]);
     const current    = parseInt(countRow.count, 10);
 
     if (current >= maxSites) {
@@ -57,10 +63,10 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const rows = await db.query(`
+    const [row] = await db.query(`
       INSERT INTO sites (name, location, tenant_id) VALUES ($1, $2, $3) RETURNING *
-    `, [name, location, req.tenant_id]);
-    res.status(201).json(rows[0]);
+    `, [name, location, tid]);
+    res.status(201).json(row);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -68,10 +74,14 @@ router.post('/', async (req, res) => {
 
 // GET /api/v1/sites/:id
 router.get('/:id', async (req, res) => {
+  const tid = req.tenant_id;
   try {
-    const rows = await req.app.locals.db.query('SELECT * FROM sites WHERE id = $1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Site not found' });
-    res.json(rows[0]);
+    const [row] = await req.app.locals.db.query(
+      'SELECT * FROM sites WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, tid]
+    );
+    if (!row) return res.status(404).json({ error: 'Site not found' });
+    res.json(row);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -80,17 +90,18 @@ router.get('/:id', async (req, res) => {
 // PATCH /api/v1/sites/:id
 router.patch('/:id', async (req, res) => {
   const { name, location, status } = req.body;
+  const tid = req.tenant_id;
   try {
-    const rows = await req.app.locals.db.query(`
+    const [row] = await req.app.locals.db.query(`
       UPDATE sites SET
         name     = COALESCE($1, name),
         location = COALESCE($2, location),
         status   = COALESCE($3, status)
-      WHERE id = $4
+      WHERE id = $4 AND tenant_id = $5
       RETURNING *
-    `, [name, location, status, req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Site not found' });
-    res.json(rows[0]);
+    `, [name, location, status, req.params.id, tid]);
+    if (!row) return res.status(404).json({ error: 'Site not found' });
+    res.json(row);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

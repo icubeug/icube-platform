@@ -75,6 +75,13 @@ router.put('/sms', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+const SENSITIVE_ROUTER_FIELDS = ['wireguard_private_key', 'bearer_token', 'install_token'];
+function sanitizeRouter(row) {
+  const out = { ...row };
+  for (const f of SENSITIVE_ROUTER_FIELDS) delete out[f];
+  return out;
+}
+
 // GET /api/v1/settings/routers  — alias for the main routers list (tenant-scoped)
 router.get('/routers', async (req, res) => {
   const db  = req.app.locals.db;
@@ -87,7 +94,7 @@ router.get('/routers', async (req, res) => {
       WHERE r.tenant_id = $1
       ORDER BY r.created_at DESC
     `, [tid]);
-    res.json(rows);
+    res.json(rows.map(sanitizeRouter));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -162,6 +169,55 @@ router.post('/api-credentials/regenerate', async (req, res) => {
   try {
     await db.query(`UPDATE tenants SET api_token = $1 WHERE id = $2`, [newToken, tid]);
     res.json({ api_token: newToken });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/v1/settings/templates — catalogue of all available portal templates
+const PORTAL_TEMPLATES = [
+  {
+    id: 'classic',
+    name: 'Classic',
+    description: 'Clean single-column layout with logo and package cards.',
+    preview_url: null,
+    themes: ['light', 'dark'],
+  },
+  {
+    id: 'modern',
+    name: 'Modern',
+    description: 'Full-bleed hero image with gradient overlay and floating card.',
+    preview_url: null,
+    themes: ['light', 'dark'],
+  },
+  {
+    id: 'minimal',
+    name: 'Minimal',
+    description: 'Text-only layout optimised for slow connections.',
+    preview_url: null,
+    themes: ['light'],
+  },
+  {
+    id: 'branded',
+    name: 'Branded',
+    description: 'Prominent logo placement with primary-color background.',
+    preview_url: null,
+    themes: ['light', 'dark'],
+  },
+];
+
+router.get('/templates', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  try {
+    const [branding] = await db.query(
+      `SELECT portal_template, portal_theme FROM tenant_branding WHERE tenant_id = $1`, [tid]
+    );
+    const active_template = branding?.portal_template || 'classic';
+    const active_theme    = branding?.portal_theme    || 'light';
+    res.json({
+      templates:       PORTAL_TEMPLATES,
+      active_template,
+      active_theme,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

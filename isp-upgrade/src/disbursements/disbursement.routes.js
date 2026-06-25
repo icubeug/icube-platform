@@ -1,6 +1,11 @@
 // src/disbursements/disbursement.routes.js
 const express = require('express');
 const router  = express.Router();
+const {
+  detectProviderByPhone,
+  initiateDisbursement: gatewayDisburse,
+  pollDisbursement:     gatewayPoll,
+} = require('../gateways/gateway.service');
 
 function paginate(req) {
   const page     = Math.max(1, parseInt(req.query.page) || 1);
@@ -61,6 +66,71 @@ router.post('/', async (req, res) => {
     `, [tid, phone, payee, amount_ugx, txn_id, reason]);
     res.status(201).json(row);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/v1/disbursements/:id/send — trigger gateway disbursement for a pending record
+router.post('/:id/send', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  try {
+    const [row] = await db.query(
+      `SELECT * FROM disbursements WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, tid]
+    );
+    if (!row) return res.status(404).json({ error: 'Disbursement not found' });
+    if (row.status !== 'pending') return res.status(409).json({ error: `Cannot send disbursement with status '${row.status}'` });
+
+    let { provider } = req.body;
+    if (!provider) {
+      provider = detectProviderByPhone(row.phone);
+      if (!provider) return res.status(400).json({ error: 'Cannot detect provider from phone — pass provider explicitly' });
+    }
+
+    const result = await gatewayDisburse({
+      provider,
+      phone:      row.phone,
+      amount_ugx: row.amount_ugx,
+      reference:  row.transaction_id,
+      reason:     row.reason,
+    });
+
+    await db.query(
+      `UPDATE disbursements SET status='processing', provider=$1, provider_ref=$2, updated_at=NOW() WHERE id=$3`,
+      [provider, result.provider_ref, row.id]
+    );
+
+    res.json({ ok: true, provider, provider_ref: result.provider_ref, status: 'processing' });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/disbursements/:id/status — poll gateway for disbursement status
+router.get('/:id/status', async (req, res) => {
+  const db  = req.app.locals.db;
+  const tid = req.tenant.id;
+  try {
+    const [row] = await db.query(
+      `SELECT * FROM disbursements WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, tid]
+    );
+    if (!row) return res.status(404).json({ error: 'Disbursement not found' });
+    if (!row.provider || !row.provider_ref) {
+      return res.status(400).json({ error: 'Disbursement has not been sent via gateway yet' });
+    }
+
+    const result = await gatewayPoll(row.provider, row.provider_ref);
+
+    if (result.status === 'completed' && row.status !== 'success') {
+      await db.query(`UPDATE disbursements SET status='success', updated_at=NOW() WHERE id=$1`, [row.id]);
+    } else if (result.status === 'failed' && row.status !== 'failed') {
+      await db.query(`UPDATE disbursements SET status='failed', updated_at=NOW() WHERE id=$1`, [row.id]);
+    }
+
+    res.json({ id: row.id, provider: row.provider, provider_ref: row.provider_ref, gateway_status: result.status });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -182,6 +182,19 @@ router.post('/heartbeat', async (req, res) => {
   }
 });
 
+// Strip credentials that should never leave the backend in a list/detail response.
+// The zero-touch creation response returns these once explicitly — that's intentional.
+const SENSITIVE_ROUTER_FIELDS = [
+  'wireguard_private_key',
+  'bearer_token',
+  'install_token',
+];
+function sanitizeRouter(row) {
+  const out = { ...row };
+  for (const f of SENSITIVE_ROUTER_FIELDS) delete out[f];
+  return out;
+}
+
 // GET /api/v1/routers
 router.get('/', async (req, res) => {
   const tid = req.tenant?.id;
@@ -190,10 +203,10 @@ router.get('/', async (req, res) => {
       SELECT r.*, s.name AS site_name
       FROM routers r
       LEFT JOIN sites s ON s.id = r.site_id
-      WHERE r.tenant_id = $1 OR $1 IS NULL
+      WHERE r.tenant_id = $1
       ORDER BY r.created_at DESC
-    `, [tid || null]);
-    res.json(rows);
+    `, [tid]);
+    res.json(rows.map(sanitizeRouter));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -201,12 +214,14 @@ router.get('/', async (req, res) => {
 
 // GET /api/v1/routers/:id
 router.get('/:id', async (req, res) => {
+  const tid = req.tenant?.id;
   try {
-    const rows = await req.app.locals.db.query(
-      'SELECT * FROM routers WHERE id = $1', [req.params.id]
+    const [row] = await req.app.locals.db.query(
+      'SELECT * FROM routers WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, tid]
     );
-    if (!rows.length) return res.status(404).json({ error: 'Router not found' });
-    res.json(rows[0]);
+    if (!row) return res.status(404).json({ error: 'Router not found' });
+    res.json(sanitizeRouter(row));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
