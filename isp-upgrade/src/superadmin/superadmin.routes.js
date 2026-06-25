@@ -698,4 +698,62 @@ router.post('/tenants/:id/delete', requireSuperadmin, async (req, res) => {
   }
 });
 
+// ── License management (superadmin) ──────────────────────────────────────────
+
+const { setLicense, getAllUsage, reviewUpgrade } = require('../licensing/license.service');
+
+// GET /api/superadmin/licenses — all tenant license usage
+router.get('/licenses', requireSuperadmin, async (req, res) => {
+  try { res.json(await getAllUsage(req.app.locals.db)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/superadmin/licenses/:tenant_id — update limits
+router.put('/licenses/:tenant_id', requireSuperadmin, async (req, res) => {
+  const { max_sites, max_routers, notes } = req.body;
+  if (max_sites === undefined && max_routers === undefined)
+    return res.status(400).json({ error: 'max_sites or max_routers required' });
+  try {
+    const current = await require('../licensing/license.service').getLicense(req.app.locals.db, req.params.tenant_id);
+    const row = await setLicense(req.app.locals.db, req.params.tenant_id, {
+      max_sites:   max_sites   ?? current.max_sites,
+      max_routers: max_routers ?? current.max_routers,
+      notes,
+      updated_by: req.superadmin.superadmin_id,
+    });
+    res.json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/superadmin/licenses/upgrade-requests
+router.get('/licenses/upgrade-requests', requireSuperadmin, async (req, res) => {
+  const { status = 'pending' } = req.query;
+  try {
+    const rows = await req.app.locals.db.query(
+      `SELECT cur.*, t.name AS tenant_name, t.slug AS tenant_slug
+       FROM capacity_upgrade_requests cur
+       JOIN tenants t ON t.id = cur.tenant_id
+       WHERE cur.status = $1
+       ORDER BY cur.created_at`,
+      [status]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /api/superadmin/licenses/upgrade-requests/:id — approve or reject
+router.patch('/licenses/upgrade-requests/:id', requireSuperadmin, async (req, res) => {
+  const { status, review_notes } = req.body;
+  if (!['approved','rejected'].includes(status))
+    return res.status(400).json({ error: 'status must be approved or rejected' });
+  try {
+    const row = await reviewUpgrade(req.app.locals.db, req.params.id, {
+      status,
+      review_notes,
+      reviewed_by: req.superadmin.superadmin_id,
+    });
+    res.json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

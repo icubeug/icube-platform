@@ -32,6 +32,10 @@ const db = {
 app.locals.db    = db;
 app.locals.redis = redis;
 
+// ── Public health liveness probe ─────────────────────────────────────────────
+const { publicRouter: healthPublicRouter, adminRouter: healthAdminRouter } = require('./healthcheck/health.routes');
+app.use('/api', healthPublicRouter);
+
 // ── Portal routes (public — captive portal, no tenant middleware) ─────────────
 app.use('/api/portal', require('./portal/portal.routes'));
 
@@ -40,6 +44,8 @@ app.use('/api/auth', require('./auth/auth.routes'));
 
 // ── Superadmin routes (no tenant middleware) ──────────────────────────────────
 app.use('/api/superadmin', require('./superadmin/superadmin.routes'));
+app.use('/api/superadmin/health',       healthAdminRouter);
+app.use('/api/superadmin/impersonate',  require('./impersonation/impersonation.routes'));
 
 // ── ZTP routes — public, bearer-token auth (script delivery, register, heartbeat)
 app.use('/api/v1/router', require('./ztp/ztp.routes'));
@@ -72,6 +78,7 @@ app.use('/api/v1/support',      require('./support/support.routes'));
 app.use('/api/v1/float',        require('./float/float.routes'));
 app.use('/api/v1/disbursements',require('./disbursements/disbursement.routes'));
 app.use('/api/v1/gateways',     require('./gateways/gateway.routes'));
+app.use('/api/v1/license',      require('./licensing/license.routes'));
 app.use('/api/v1/transactions', require('./transactions/transaction.routes'));
 app.use('/api/v1/billing',      require('./billing/billing.routes'));
 app.use('/api/v1/settings',     require('./settings/settings.routes'));
@@ -145,6 +152,17 @@ cron.schedule('*/2 * * * *', async () => {
 // VPN offline sweep — every 2 minutes
 cron.schedule('*/2 * * * *', async () => {
   await sweepOfflineRouters(db);
+});
+
+// ── Self-Check Engine — every 5 minutes ───────────────────────────────────────
+const { runHealthCheck } = require('./healthcheck/health.service');
+cron.schedule('*/5 * * * *', async () => {
+  try {
+    const { score, duration_ms } = await runHealthCheck(db);
+    console.log(`[HEALTH] Score: ${score.score}/100 (${score.status}) — ${duration_ms}ms`);
+  } catch (err) {
+    console.error('[HEALTH] Check failed:', err.message);
+  }
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────
