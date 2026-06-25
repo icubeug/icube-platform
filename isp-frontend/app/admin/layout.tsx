@@ -80,8 +80,8 @@ function NavRow({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const [open, setOpen] = useState(!!hasChildActive);
   useEffect(() => { if (hasChildActive) setOpen(true); }, [hasChildActive]);
 
-  const textActive   = 'var(--text-primary)';
-  const textInactive = 'var(--text-tertiary)';
+  const textActive   = '#ffffff';
+  const textInactive = 'rgba(255,255,255,0.82)';
 
   if (item.children) {
     return (
@@ -112,7 +112,7 @@ function NavRow({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
                 return (
                   <Link key={c.href} href={c.href} style={{
                     display: 'block', padding: '5px 8px', fontSize: 11, borderRadius: 0,
-                    color: active ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+                    color: active ? '#ffffff' : 'rgba(255,255,255,0.65)',
                     textDecoration: 'none', transition: 'color .15s',
                     borderLeft: active ? `2px solid ${BLUE}` : '2px solid transparent',
                     marginLeft: -8 - 1, paddingLeft: active ? 14 : 8,
@@ -204,7 +204,7 @@ function SidebarContent({
             padding: '6px 8px', borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer',
           }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: activeSite ? dotColor : '#22c55e', flexShrink: 0 }} />
-            <span className="site-name" style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="site-name" style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {activeSite?.name || 'All Sites'}
             </span>
             <ChevronDown size={11} style={{ color: 'var(--text-tertiary)', transform: siteOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }} />
@@ -242,7 +242,7 @@ function SidebarContent({
         {MAIN_NAV.map(item => <NavRow key={item.label} item={item} collapsed={collapsed} />)}
         {!collapsed && (
           <div style={{ padding: '12px 10px 4px' }}>
-            <p style={{ fontSize: 9, fontWeight: 600, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>ACCOUNT</p>
+            <p style={{ fontSize: 9, fontWeight: 600, letterSpacing: '.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)' }}>ACCOUNT</p>
           </div>
         )}
         {ACCOUNT_NAV.map(item => <NavRow key={item.label} item={item} collapsed={collapsed} />)}
@@ -254,8 +254,8 @@ function SidebarContent({
           <div style={{ width: 26, height: 26, borderRadius: '50%', background: BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initials}</div>
           {!collapsed && (
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p className="user-name"  style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{user?.name || 'Admin'}</p>
-              <p className="user-email" style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{user?.email || ''}</p>
+              <p className="user-name"  style={{ fontSize: 12, fontWeight: 600, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{user?.name || 'Admin'}</p>
+              <p className="user-email" style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{user?.email || ''}</p>
             </div>
           )}
         </div>

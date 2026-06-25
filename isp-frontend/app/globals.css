@@ -82,8 +82,11 @@
 }
 
 /* ── Base ────────────────────────────────────────────────────────────────────── */
-html { background-color: var(--bg-primary); color: var(--text-primary); min-height: 100%; }
+html { background-color: var(--bg-primary); color: var(--text-primary); min-height: 100%; font-size: 15px; }
 body { background-color: var(--bg-primary); color: var(--text-primary); min-height: 100vh; }
+
+/* ── Content zoom ─────────────────────────────────────────────────────────────── */
+.main-content { zoom: 1.08; }
 
 /* Light mode page background — overrides hardcoded inline styles on .min-h-screen */
 .light .min-h-screen          { background: var(--bg-secondary) !important; }
