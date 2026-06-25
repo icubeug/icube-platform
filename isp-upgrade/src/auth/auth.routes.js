@@ -322,8 +322,15 @@ router.post('/verify-otp', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // Fetch must_change_password and totp_verified
+    const [flags] = await db.query(
+      `SELECT must_change_password, totp_verified FROM admins WHERE id = $1`, [admin.id]
+    );
+
     res.json({
       token,
+      must_change_password: !!flags?.must_change_password,
+      totp_enrolled: !!flags?.totp_verified,
       admin: { id: admin.id, email: admin.email, name: admin.name, role: admin.role },
       tenant: { id: admin.tenant_id, name: admin.tenant_name, status: admin.tenant_status, slug: admin.slug, plan: admin.plan },
     });
@@ -480,6 +487,131 @@ router.get('/me', async (req, res) => {
   } catch {
     res.status(401).json({ error: 'Invalid token' });
   }
+});
+
+// ── Admin auth middleware (shared by routes below) ────────────────────────────
+function requireAdmin(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
+  try {
+    const payload = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    if (!payload.admin_id) return res.status(403).json({ error: 'Not an admin token' });
+    req.admin = payload;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// ── POST /api/auth/change-password — self-service password change (logged-in admin) ──
+router.post('/change-password', requireAdmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'current_password and new_password required' });
+  }
+  if (new_password.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  try {
+    const [admin] = await db.query(
+      `SELECT id, password_hash, password_hash_bcrypt FROM admins WHERE id = $1`, [req.admin.admin_id]
+    );
+    const hash = admin.password_hash_bcrypt || admin.password_hash;
+    const valid = await bcrypt.compare(current_password, hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect.' });
+
+    const newHash = await bcrypt.hash(new_password, 12);
+    await db.query(
+      `UPDATE admins SET password_hash = $1, password_hash_bcrypt = $1, must_change_password = FALSE WHERE id = $2`,
+      [newHash, admin.id]
+    );
+    res.json({ ok: true, message: 'Password updated.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/auth/2fa/setup — generate TOTP secret + QR code ────────────────
+router.post('/2fa/setup', requireAdmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const QRCode = require('qrcode');
+  const { authenticator } = require('otplib');
+  try {
+    const [admin] = await db.query(
+      `SELECT id, email, totp_secret, totp_verified FROM admins WHERE id = $1`, [req.admin.admin_id]
+    );
+    if (!admin) return res.status(404).json({ error: 'User not found' });
+    if (admin.totp_verified) {
+      return res.status(400).json({ error: '2FA already active. Disable it first from security settings.' });
+    }
+
+    const secret = admin.totp_secret || authenticator.generateSecret();
+    if (!admin.totp_secret) {
+      await db.query(
+        `UPDATE admins SET totp_secret = $1, totp_verified = FALSE WHERE id = $2`, [secret, admin.id]
+      );
+    }
+    const otpauthUrl = authenticator.keyuri(admin.email, 'iCube ISP', secret);
+    const qrDataUrl  = await QRCode.toDataURL(otpauthUrl);
+    res.json({ secret, qr_code: qrDataUrl, otpauth_url: otpauthUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/auth/2fa/verify-setup — confirm first TOTP code, enable 2FA ────
+router.post('/2fa/verify-setup', requireAdmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { authenticator } = require('otplib');
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'code required' });
+  try {
+    const [admin] = await db.query(
+      `SELECT id, totp_secret FROM admins WHERE id = $1`, [req.admin.admin_id]
+    );
+    if (!admin?.totp_secret) {
+      return res.status(400).json({ error: '2FA not set up yet. Call /2fa/setup first.' });
+    }
+    const valid = authenticator.verify({ token: String(code).replace(/\s/g, ''), secret: admin.totp_secret });
+    if (!valid) return res.status(400).json({ error: 'Invalid code. Check your authenticator app and try again.' });
+
+    await db.query(`UPDATE admins SET totp_verified = TRUE WHERE id = $1`, [admin.id]);
+    res.json({ ok: true, message: '2FA enabled successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/auth/2fa/disable — disable 2FA (requires current password) ───
+router.delete('/2fa/disable', requireAdmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: 'password required to disable 2FA' });
+  try {
+    const [admin] = await db.query(
+      `SELECT id, password_hash, password_hash_bcrypt FROM admins WHERE id = $1`, [req.admin.admin_id]
+    );
+    const hash = admin.password_hash_bcrypt || admin.password_hash;
+    const valid = await bcrypt.compare(password, hash);
+    if (!valid) return res.status(401).json({ error: 'Incorrect password.' });
+
+    await db.query(
+      `UPDATE admins SET totp_secret = NULL, totp_verified = FALSE WHERE id = $1`, [admin.id]
+    );
+    res.json({ ok: true, message: '2FA disabled.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/auth/2fa/status ──────────────────────────────────────────────────
+router.get('/2fa/status', requireAdmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const [row] = await db.query(
+    `SELECT totp_verified FROM admins WHERE id = $1`, [req.admin.admin_id]
+  );
+  res.json({ totp_enabled: !!row?.totp_verified });
 });
 
 module.exports = router;

@@ -21,24 +21,116 @@ function requireSuperadmin(req, res, next) {
 }
 
 // POST /api/superadmin/login
+// Step 1: email + password → issues a short-lived pre-auth token if TOTP is enabled,
+//         or a full JWT if TOTP has not been set up yet.
+// Step 2 (TOTP enabled): POST /api/superadmin/login/totp with pre_auth_token + code
 router.post('/login', async (req, res) => {
   const db = req.app.locals.db;
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
   try {
-    const rows = await db.query(
-      `SELECT * FROM superadmin_users WHERE email = $1`, [email]
-    );
+    const rows = await db.query(`SELECT * FROM superadmin_users WHERE email = $1`, [email]);
     if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+    // If TOTP is enrolled, return a pre-auth token — full JWT requires TOTP step
+    if (user.totp_verified && user.totp_secret) {
+      const preAuthToken = jwt.sign(
+        { pre_auth: true, superadmin_id: user.id },
+        SA_SECRET,
+        { expiresIn: '5m' }
+      );
+      return res.json({
+        status: 'totp_required',
+        pre_auth_token: preAuthToken,
+        message: 'Enter the 6-digit code from your authenticator app.',
+      });
+    }
+
+    // No TOTP enrolled — issue full JWT (warn frontend to encourage setup)
     const token = jwt.sign(
       { superadmin_id: user.id, role: user.role, email: user.email },
       SA_SECRET,
       { expiresIn: '12h' }
     );
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+    res.json({
+      token,
+      must_change_password: !!user.must_change_password,
+      totp_enrolled: false,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/superadmin/login/totp — step 2: verify TOTP code, issue full JWT
+router.post('/login/totp', async (req, res) => {
+  const db = req.app.locals.db;
+  const { pre_auth_token, code } = req.body;
+  if (!pre_auth_token || !code) return res.status(400).json({ error: 'pre_auth_token and code required' });
+  try {
+    let payload;
+    try {
+      payload = jwt.verify(pre_auth_token, SA_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Pre-auth token expired or invalid. Please log in again.' });
+    }
+    if (!payload.pre_auth || !payload.superadmin_id) {
+      return res.status(401).json({ error: 'Invalid pre-auth token.' });
+    }
+
+    const [user] = await db.query(
+      `SELECT id, name, email, role, totp_secret, totp_verified, must_change_password FROM superadmin_users WHERE id = $1`,
+      [payload.superadmin_id]
+    );
+    if (!user) return res.status(401).json({ error: 'User not found.' });
+
+    const { authenticator } = require('otplib');
+    const valid = authenticator.verify({ token: String(code).replace(/\s/g, ''), secret: user.totp_secret });
+    if (!valid) return res.status(401).json({ error: 'Invalid authenticator code.' });
+
+    const token = jwt.sign(
+      { superadmin_id: user.id, role: user.role, email: user.email },
+      SA_SECRET,
+      { expiresIn: '12h' }
+    );
+    res.json({
+      token,
+      must_change_password: !!user.must_change_password,
+      totp_enrolled: true,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/superadmin/change-password — self-service password change (requires current password)
+router.post('/change-password', requireSuperadmin, async (req, res) => {
+  const db = req.app.locals.db;
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'current_password and new_password required' });
+  }
+  if (new_password.length < 10) {
+    return res.status(400).json({ error: 'New password must be at least 10 characters.' });
+  }
+  try {
+    const [user] = await db.query(
+      `SELECT id, password_hash FROM superadmin_users WHERE id = $1`, [req.superadmin.superadmin_id]
+    );
+    const valid = await bcrypt.compare(current_password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect.' });
+
+    const hash = await bcrypt.hash(new_password, 12);
+    await db.query(
+      `UPDATE superadmin_users SET password_hash = $1, must_change_password = FALSE WHERE id = $2`,
+      [hash, user.id]
+    );
+    res.json({ ok: true, message: 'Password updated.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -653,8 +745,11 @@ router.post('/tenants/:id/reset-password', requireSuperadmin, async (req, res) =
     const admin = admins[0];
     const newPassword = crypto.randomBytes(8).toString('hex');
     const hash = await bcrypt.hash(newPassword, 12);
-    await db.query(`UPDATE admins SET password_hash = $1 WHERE id = $2`, [hash, admin.id]);
-    res.json({ email: admin.email, new_password: newPassword });
+    await db.query(
+      `UPDATE admins SET password_hash = $1, must_change_password = TRUE WHERE id = $2`,
+      [hash, admin.id]
+    );
+    res.json({ email: admin.email, new_password: newPassword, must_change_password: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
