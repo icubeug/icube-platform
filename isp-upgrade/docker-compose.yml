@@ -37,8 +37,12 @@ services:
       WG_SERVER_URL:        ${WG_SERVER_URL:-139.84.247.205}
       WG_SERVER_PORT:       51820
       PLATFORM_DOMAIN:      ${PLATFORM_DOMAIN:-icubeug.net}
+      PLATFORM_URL:         https://web.icubeug.net
+      MARKETING_URL:        https://icubeug.net
+      RADIUS_HOST:          freeradius
+      RADIUS_AUTH_PORT:     1812
       EMAIL_FROM:           icube.support@icubeug.net
-      EMAIL_PASSWORD:       datN6yyDWJVm
+      EMAIL_PASSWORD:       ${EMAIL_PASSWORD}
       EMAIL_HOST:           smtp.zoho.com
       EMAIL_PORT:           465
     depends_on:
@@ -52,10 +56,11 @@ services:
     networks:
       - isp-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
   postgres:

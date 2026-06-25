@@ -218,14 +218,15 @@ async function checkDNS() {
 }
 
 async function checkEmail() {
-  if (!process.env.SMTP_PASS) return { ok: null, skipped: true, reason: 'SMTP_PASS not configured' };
+  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASSWORD;
+  if (!pass) return { ok: null, skipped: true, reason: 'SMTP credentials not configured' };
   try {
     const nodemailer = require('nodemailer');
     const transport  = nodemailer.createTransport({
-      host:   process.env.SMTP_HOST || 'smtp.zoho.com',
-      port:   parseInt(process.env.SMTP_PORT || '465'),
+      host:   process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.zoho.com',
+      port:   parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '465'),
       secure: true,
-      auth: { user: process.env.SMTP_USER || process.env.SMTP_FROM, pass: process.env.SMTP_PASS },
+      auth: { user: process.env.SMTP_USER || process.env.EMAIL_FROM, pass },
     });
     await transport.verify();
     return { ok: true, host: process.env.SMTP_HOST || 'smtp.zoho.com' };

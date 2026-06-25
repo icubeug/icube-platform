@@ -11,18 +11,20 @@ const ALERT_TO    = (process.env.ALERT_TO || 'admin@icubeug.net').split(',').map
 // ── Zoho SMTP ─────────────────────────────────────────────────────────────────
 function getTransport() {
   return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST   || 'smtp.zoho.com',
-    port:   parseInt(process.env.SMTP_PORT || '465'),
-    secure: (process.env.SMTP_PORT || '465') === '465',
+    host:   process.env.SMTP_HOST   || process.env.EMAIL_HOST || 'smtp.zoho.com',
+    port:   parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '465'),
+    secure: true,
     auth: {
-      user: process.env.SMTP_USER || process.env.SMTP_FROM,
-      pass: process.env.SMTP_PASS,
+      user: process.env.SMTP_USER || process.env.EMAIL_FROM || process.env.SMTP_FROM,
+      pass: process.env.SMTP_PASS || process.env.EMAIL_PASSWORD,
     },
   });
 }
 
 async function sendEmail({ severity, title, body }) {
-  if (!process.env.SMTP_PASS) return { skipped: true, reason: 'SMTP_PASS not set' };
+  // Support both SMTP_PASS (new) and EMAIL_PASSWORD (prod server naming)
+  if (!process.env.SMTP_PASS && !process.env.EMAIL_PASSWORD)
+    return { skipped: true, reason: 'SMTP credentials not set' };
   try {
     const subject = `[iCube ${severity.toUpperCase()}] ${title}`;
     await getTransport().sendMail({
