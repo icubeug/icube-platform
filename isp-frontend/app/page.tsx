@@ -1,5 +1,3 @@
-import { redirect } from 'next/navigation';
-import { headers } from 'next/headers';
 import '@/components/marketing/marketing.css';
 import Navbar from '@/components/marketing/Navbar';
 import Hero from '@/components/marketing/Hero';
@@ -13,15 +11,9 @@ import Testimonials from '@/components/marketing/Testimonials';
 import CTABanner from '@/components/marketing/CTABanner';
 import Footer from '@/components/marketing/Footer';
 
+// web.icubeug.net → /auth/login is handled in middleware.ts (NextResponse.redirect)
+// so this page only ever renders on the marketing domain (icubeug.net)
 export default function Home() {
-  const host = headers().get('host') || '';
-
-  // Platform domain (web.icubeug.net) — send straight to the app
-  if (host.startsWith('web.')) {
-    redirect('/admin');
-  }
-
-  // Marketing domain (icubeug.net / www.icubeug.net) — show the homepage
   return (
     <>
       <Navbar />
