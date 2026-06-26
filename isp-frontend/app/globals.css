@@ -87,6 +87,7 @@ body { background-color: var(--bg-primary); color: var(--text-primary); min-heig
 
 /* ── Content zoom ────────────────────────────────────────────────────────────── */
 .main-content { zoom: 1.15; }
+aside { zoom: 1.15; }
 
 /* Light mode page background — overrides hardcoded inline styles on .min-h-screen */
 .light .min-h-screen          { background: var(--bg-secondary) !important; }
