@@ -346,7 +346,7 @@ export default function GeneralSettingsPage() {
               <input
                 type="text"
                 className="input w-full"
-                placeholder={data?.business_name || 'Business name'}
+                placeholder={(data as unknown as Record<string, string>)?.business_name || 'Business name'}
                 value={deleteConfirmName}
                 onChange={(e) => setDeleteConfirmName(e.target.value)}
               />
