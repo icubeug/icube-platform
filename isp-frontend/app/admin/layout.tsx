@@ -160,7 +160,7 @@ function BottomNav() {
         const active = href === '/admin' ? path === '/admin' : path.startsWith(href);
         return (
           <Link key={href} href={href} className={active ? 'active' : ''}>
-            <Icon size={20} />
+            <Icon size={22} />
             <span className="nav-label">{label}</span>
           </Link>
         );
@@ -354,18 +354,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* ── Top bar ── */}
         <header style={{
-          height: 44, flexShrink: 0, display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', padding: '0 16px', gap: 8,
+          height: isMobile ? 52 : 44, flexShrink: 0, display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', padding: isMobile ? '0 14px' : '0 16px', gap: 8,
           background: 'var(--sidebar-bg)', borderBottom: `1px solid var(--border)`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {/* Hamburger — mobile only */}
             {isMobile && (
               <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{
-                background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer',
-                display: 'flex', padding: 4,
+                background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer',
+                display: 'flex', padding: 8, margin: -8, WebkitTapHighlightColor: 'transparent',
               }}>
-                {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+                {sidebarOpen ? <X size={22} /> : <Menu size={22} />}
               </button>
             )}
             {isMobile && (
