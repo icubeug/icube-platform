@@ -306,31 +306,129 @@ router.patch('/tenants/:id', requireSuperadmin, async (req, res) => {
   }
 });
 
+// ── My Business (SA Owner Mode) ───────────────────────────────────────────────
+
+// GET /api/superadmin/my-tenant — get the SA's linked personal tenant
+router.get('/my-tenant', requireSuperadmin, async (req, res) => {
+  const db  = req.app.locals.db;
+  const key = `sa_owner_tenant_${req.superadmin.superadmin_id}`;
+  try {
+    const [setting] = await db.query(`SELECT value FROM platform_settings WHERE key = $1`, [key]);
+    if (!setting) return res.json(null);
+    const [tenant] = await db.query(
+      `SELECT t.id, t.name, t.slug, t.status, t.plan,
+              COUNT(DISTINCT r.id) AS router_count,
+              COUNT(DISTINCT s.id) AS site_count
+       FROM tenants t
+       LEFT JOIN routers r ON r.tenant_id = t.id
+       LEFT JOIN sites   s ON s.tenant_id = t.id
+       WHERE t.id = $1 GROUP BY t.id`, [setting.value]
+    );
+    res.json(tenant || null);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/superadmin/my-tenant — link a tenant as the SA's own business
+router.put('/my-tenant', requireSuperadmin, async (req, res) => {
+  const db  = req.app.locals.db;
+  const { tenant_id } = req.body;
+  if (!tenant_id) return res.status(400).json({ error: 'tenant_id required' });
+  const key = `sa_owner_tenant_${req.superadmin.superadmin_id}`;
+  try {
+    await db.query(
+      `INSERT INTO platform_settings (key, value) VALUES ($1,$2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key, String(tenant_id)]
+    );
+    const [tenant] = await db.query(`SELECT id, name, slug, status, plan FROM tenants WHERE id = $1`, [tenant_id]);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+    res.json(tenant);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/superadmin/my-tenant — unlink the SA's personal tenant
+router.delete('/my-tenant', requireSuperadmin, async (req, res) => {
+  const db  = req.app.locals.db;
+  const key = `sa_owner_tenant_${req.superadmin.superadmin_id}`;
+  try {
+    await db.query(`DELETE FROM platform_settings WHERE key = $1`, [key]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/superadmin/my-tenant/access — generate unlimited owner-mode JWT
+router.post('/my-tenant/access', requireSuperadmin, async (req, res) => {
+  const db         = req.app.locals.db;
+  const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret';
+  const key        = `sa_owner_tenant_${req.superadmin.superadmin_id}`;
+  try {
+    const [setting] = await db.query(`SELECT value FROM platform_settings WHERE key = $1`, [key]);
+    if (!setting) return res.status(404).json({ error: 'No tenant linked. Link your business first.' });
+
+    const [tenant] = await db.query(`SELECT id, name, slug FROM tenants WHERE id = $1`, [setting.value]);
+    if (!tenant) return res.status(404).json({ error: 'Linked tenant no longer exists.' });
+
+    const admins = await db.query(
+      `SELECT id, role FROM admins WHERE tenant_id = $1
+       ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, created_at ASC LIMIT 1`,
+      [tenant.id]
+    );
+    const admin   = admins[0];
+    const adminId = admin ? admin.id : `sa_${req.superadmin.superadmin_id}`;
+
+    const token = jwt.sign(
+      {
+        admin_id:      adminId,
+        tenant_id:     tenant.id,
+        role:          'admin',
+        impersonating: true,
+        sa_owner_mode: true,
+        unlimited:     true,
+        superadmin_id: req.superadmin.superadmin_id,
+      },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.json({
+      token,
+      tenant_id:     tenant.id,
+      tenant_name:   tenant.name,
+      tenant_slug:   tenant.slug,
+      sa_owner_mode: true,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /api/superadmin/impersonate/:tenant_id — generate short-lived admin JWT
 router.post('/impersonate/:tenant_id', requireSuperadmin, async (req, res) => {
   const db         = req.app.locals.db;
   const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret';
   try {
-    // Find the primary admin for this tenant
+    // Load tenant (required) — admin is optional
+    const [tenant] = await db.query(`SELECT id, name, slug FROM tenants WHERE id = $1`, [req.params.tenant_id]);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    // Try to find the primary admin — use a synthetic identity if none exists
     const admins = await db.query(`
-      SELECT a.id, a.email, a.name, a.role, t.name AS tenant_name, t.slug
+      SELECT a.id, a.email, a.name, a.role
       FROM admins a
-      JOIN tenants t ON t.id = a.tenant_id
       WHERE a.tenant_id = $1
       ORDER BY CASE a.role WHEN 'admin' THEN 0 ELSE 1 END, a.created_at ASC
       LIMIT 1
     `, [req.params.tenant_id]);
 
-    if (!admins.length) return res.status(404).json({ error: 'No admin found for this tenant' });
     const admin = admins[0];
+    const adminId   = admin ? admin.id   : `sa_${req.superadmin.superadmin_id}`;
+    const adminRole = admin ? admin.role : 'admin';
 
     const token = jwt.sign(
       {
-        admin_id:        admin.id,
-        tenant_id:       req.params.tenant_id,
-        role:            admin.role,
-        impersonating:   true,
-        superadmin_id:   req.superadmin.superadmin_id,
+        admin_id:      adminId,
+        tenant_id:     req.params.tenant_id,
+        role:          adminRole,
+        impersonating: true,
+        superadmin_id: req.superadmin.superadmin_id,
       },
       JWT_SECRET,
       { expiresIn: '1h' }
@@ -338,10 +436,10 @@ router.post('/impersonate/:tenant_id', requireSuperadmin, async (req, res) => {
 
     res.json({
       token,
-      admin_id:     admin.id,
-      tenant_id:    req.params.tenant_id,
-      tenant_name:  admin.tenant_name,
-      tenant_slug:  admin.slug,
+      admin_id:      adminId,
+      tenant_id:     req.params.tenant_id,
+      tenant_name:   tenant.name,
+      tenant_slug:   tenant.slug,
       impersonating: true,
     });
   } catch (err) {
@@ -697,16 +795,22 @@ router.post('/tenants', requireSuperadmin, async (req, res) => {
   const { business_name, owner_name, owner_email, owner_phone, password, site_limit = 5, plan = 'free' } = req.body;
   if (!business_name || !owner_email) return res.status(400).json({ error: 'business_name and owner_email required' });
 
+  const { subdomain, max_routers } = req.body;
   const finalPassword = password || crypto.randomBytes(8).toString('hex');
   const passwordHash  = await bcrypt.hash(finalPassword, 12);
-  const slug = business_name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  const rawSlug = subdomain || business_name;
+  const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
   try {
     // Check email uniqueness across admins
     const existing = await db.query(`SELECT id FROM admins WHERE email = $1`, [owner_email]);
     if (existing.length) return res.status(400).json({ error: 'An admin with this email already exists' });
 
-    // Create tenant
+    // Check slug uniqueness
+    const slugExists = await db.query(`SELECT id FROM tenants WHERE slug = $1`, [slug]);
+    if (slugExists.length) return res.status(400).json({ error: `Subdomain "${slug}" is already taken. Choose another.` });
+
+    // Create tenant — store max_routers if the column exists
     const [tenant] = await db.query(`
       INSERT INTO tenants (name, slug, owner_email, plan, status, max_sites)
       VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *

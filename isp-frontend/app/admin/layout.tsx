@@ -280,6 +280,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [accountOpen,        setAccountOpen]        = useState(false);
   const [impersonating,      setImpersonating]      = useState(false);
   const [impersonateName,    setImpersonateName]    = useState('');
+  const [saOwnerMode,        setSaOwnerMode]        = useState(false);
 
   const accountRef = useRef<HTMLDivElement>(null);
   const path       = usePathname();
@@ -293,6 +294,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (localStorage.getItem('icube_impersonating') === 'true') {
       setImpersonating(true);
       setImpersonateName(localStorage.getItem('icube_impersonating_tenant_name') || 'Unknown');
+      if (localStorage.getItem('icube_sa_owner_mode') === 'true') setSaOwnerMode(true);
     }
   }, []);
 
@@ -310,8 +312,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     localStorage.removeItem('icube_impersonating');
     localStorage.removeItem('icube_impersonating_tenant_name');
     localStorage.removeItem('icube_original_token');
+    localStorage.removeItem('icube_sa_owner_mode');
     document.cookie = `icube_token=${original || ''}; path=/; max-age=604800; SameSite=Lax`;
-    window.location.href = '/superadmin/tenants';
+    window.location.href = saOwnerMode ? '/superadmin/dashboard' : '/superadmin/tenants';
   }
 
   function selectSite(id: string) {
@@ -436,8 +439,40 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </header>
 
-        {/* ── Impersonation banner ── */}
-        {impersonating && (
+        {/* ── Owner Mode banner (SA managing own business) ── */}
+        {impersonating && saOwnerMode && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '0 16px', flexShrink: 0, flexWrap: 'wrap', gap: 8, height: 40,
+            background: 'linear-gradient(90deg, rgba(14,165,233,0.18) 0%, rgba(99,102,241,0.12) 100%)',
+            borderBottom: '1px solid rgba(14,165,233,0.3)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {/* Zap icon inline to avoid import issue */}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#38bdf8' }}>
+                Owner Mode
+              </span>
+              <span style={{ width: 1, height: 14, background: 'rgba(14,165,233,0.3)' }} />
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>
+                Managing <strong style={{ color: '#f1f5f9' }}>{impersonateName}</strong>
+              </span>
+              <span style={{ fontSize: 9, fontWeight: 800, color: '#f59e0b', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 99, padding: '1px 7px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Unlimited
+              </span>
+            </div>
+            <button onClick={exitImpersonation} style={{
+              background: 'rgba(14,165,233,0.15)', border: '1px solid rgba(14,165,233,0.35)',
+              color: '#38bdf8', borderRadius: 7, padding: '4px 12px',
+              fontSize: 11, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+            }}>
+              ← Back to SA Panel
+            </button>
+          </div>
+        )}
+
+        {/* ── Impersonation banner (viewing another tenant) ── */}
+        {impersonating && !saOwnerMode && (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '8px 16px', flexShrink: 0, flexWrap: 'wrap', gap: 8,
@@ -446,7 +481,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <AlertTriangle size={14} color="#f59e0b" />
               <span style={{ fontSize: 12, fontWeight: 600, color: '#fcd34d' }}>
-                ⚠ Viewing as <strong>{impersonateName}</strong>
+                Viewing as <strong>{impersonateName}</strong>
               </span>
             </div>
             <button onClick={exitImpersonation} style={{
